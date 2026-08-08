@@ -23,13 +23,13 @@ opening the shell, soldering a UART bridge, and flashing over ESPHome Web.
 
 ### 1. Remove the base disk
 
-The round foot on the bottom comes off by rotating the Tonie to the left. Place
+The round plate on the bottom comes off by rotating the Tonie to the left. Place
 it on a stable surface (the floor, as pictured) and rotate while pressing down —
 it is held by clips, not screws. Underneath is the only Phillips screw holding
 the internals and exterior shell together.
 
-![Foot disk pried loose](images/01-foot-removed.jpg)
-*Foot disk pried loose*
+![Bottom plate removed](images/01-foot-removed.jpg)
+*Bottom plate removed*
 
 ![Screw exposed underneath](images/02-bottom-screw.jpg)
 *First screw, exposed*
@@ -56,8 +56,8 @@ gently side to side while pulling.
 ![Battery unclipped, screws out](images/05-battery-out.jpg)
 *Battery unclipped, screws out*
 
-![Jack and mounting post detail](images/06-jack-detail.jpg)
-*Jack and mounting post detail*
+![NFC antenna connector disconnected](images/06-antenna-connector.jpg)
+*NFC antenna connector disconnected*
 
 ### 4. Board out
 
@@ -131,7 +131,7 @@ When prompted to match a board, pick **ESP32-S3 DevKitC-1**.
 
 ### Install the firmware
 
-The first install needs the USB cable — pick whichever option matches where the
+The first install has to go over UART — pick whichever option matches where the
 adapter is plugged in. Once OTA is configured, later flashes go over Wi-Fi.
 
 ![Pick an install method](images/24-install-method.png)
