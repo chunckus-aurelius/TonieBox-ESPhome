@@ -1,0 +1,291 @@
+# TonieESP -- example ESPHome config for ESP32-S3 Toniebox hardware (rev v1.6.C).
+#
+# This is a working reference config, not a starting skeleton: the pin map,
+# boot order and audio buffer sizes are all specific to this board and most of
+# them are load-bearing. Comments marked with a warning explain why something
+# that looks arbitrary is not. Read those before changing the value next to it.
+#
+# Pin assignments come from the teddybox project's board_def.h for this
+# revision. Custom components live in ./components -- see README.md.
+
+esphome:
+  name: tonieesp
+  friendly_name: TonieESP
+  # Powers the peripheral rails before the I2C bus comes up (BUS = 1000).
+  # Both the priority and the single-lambda structure matter.
+  on_boot:
+    priority: 1100
+    then:
+      # ONE LAMBDA ON PURPOSE. Do not split this into separate actions with
+      # `- delay:` between them: DelayAction is asynchronous and returns
+      # immediately, so the I2C bus would be created part-way through the
+      # power-up sequence and every device on it would fail to probe.
+      - lambda: |-
+          // --- audio_board_power(true) ---
+          gpio_reset_pin(GPIO_NUM_45);
+          gpio_set_direction(GPIO_NUM_45, GPIO_MODE_OUTPUT);
+          gpio_set_level(GPIO_NUM_45, 1);   // POWER_GPIO    -> HIGH
+          gpio_reset_pin(GPIO_NUM_47);
+          gpio_set_direction(GPIO_NUM_47, GPIO_MODE_OUTPUT);
+          gpio_set_level(GPIO_NUM_47, 0);   // SD_POWER_GPIO -> LOW (active low)
+
+          // --- DAC3100 hardware reset pulse ---
+          gpio_reset_pin(GPIO_NUM_26);
+          gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);
+          gpio_set_level(GPIO_NUM_26, 0);   // into reset
+          delay(10);                        // BLOCKING on purpose
+          gpio_set_level(GPIO_NUM_26, 1);   // release
+          delay(10);
+
+          // Rail/codec settle before BUS(1000) creates the I2C bus.
+          delay(250);
+
+esp32:
+  board: esp32-s3-devkitc-1  # placeholder -- confirm the exact module for your board
+  framework:
+    type: esp-idf
+
+# No psram: block -- PSRAM is absent on this hardware. Every buffer below has
+# to fit in internal SRAM, which is why the audio sizes are conservative.
+
+external_components:
+  # Consume the components straight from this repository.
+  - source:
+      type: git
+      url: https://github.com/chunckus-aurelius/TonieBox-ESPhome
+      ref: main
+    components: [trf7962a, dac3100, lis3dh]
+  # If you have cloned the repo instead, swap the block above for:
+  #   - source:
+  #       type: local
+  #       path: components
+
+logger:
+  level: DEBUG
+  logs:
+    # Sensor states log at ESP_LOGV per sensor per poll -- ~30 lines/sec here.
+    sensor: INFO
+    text_sensor: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+spi:
+  id: toniebox_spi
+  mosi_pin: GPIO2
+  miso_pin: GPIO3
+  clk_pin: GPIO4
+
+i2c:
+  id: toniebox_i2c
+  sda: GPIO5
+  scl: GPIO6
+  frequency: 400kHz
+  scan: true
+
+i2s_audio:
+  id: toniebox_i2s
+  i2s_lrclk_pin: GPIO12  # I2S_WS_GPIO
+  i2s_bclk_pin: GPIO11   # I2S_BCK_GPIO
+
+trf7962a:
+  id: nfc_reader
+  spi_id: toniebox_spi
+  cs_pin: GPIO1           # SPI_SS_GPIO
+  irq_pin: GPIO13         # TRF7962A_IRQ_GPIO
+  update_interval: 500ms
+  # Reporting the tag to Home Assistant is the only thing the device does with
+  # it. Keep the tag automations themselves in HA.
+  on_tag_present:
+    then:
+      # The size guard is a condition rather than an early `return` so that a
+      # short read cannot fire tag_scanned with a stale or empty UID and set
+      # off the wrong HA automation. `x` is a std::vector<uint8_t>, and
+      # tag_scanned wants a std::string, so it reads the formatted UID back
+      # off the text sensor published immediately above it.
+      - if:
+          condition:
+            lambda: 'return x.size() >= 8;'
+          then:
+            - lambda: |-
+                char buf[17];
+                for (int i = 0; i < 8; i++) {
+                  snprintf(&buf[i * 2], 3, "%02X", x[7 - i]);
+                }
+                id(nfc_tag_uid).publish_state(buf);
+            - homeassistant.tag_scanned: !lambda 'return id(nfc_tag_uid).state;'
+  on_tag_removed:
+    then:
+      - lambda: 'id(nfc_tag_uid).publish_state("none");'
+
+text_sensor:
+  - platform: template
+    id: nfc_tag_uid
+    name: "NFC Tag UID"
+    icon: "mdi:nfc-variant"
+    update_interval: never  # pushed from the triggers above
+
+dac3100:
+  id: audio_codec
+  i2c_id: toniebox_i2c
+  address: 0x18
+
+# Topology: i2s speaker <- mixer <- per-source resampler <- media_player.
+#
+# These sizes are memory-constrained, not arbitrary. With no PSRAM the whole
+# pipeline plus the MP3 decoder has to fit in internal SRAM, and 44.1 kHz
+# playback only just does. If you raise any buffer here, expect allocation
+# failures at runtime rather than at compile time.
+speaker:
+  - platform: i2s_audio
+    id: toniebox_i2s_speaker
+    i2s_audio_id: toniebox_i2s
+    dac_type: external
+    i2s_dout_pin: GPIO10  # I2S_DATA_GPIO
+    sample_rate: 44100      # must match the pipelines below
+    buffer_duration: 100ms  # 150ms does not fit at this rate
+
+  - platform: mixer
+    id: toniebox_mixer
+    output_speaker: toniebox_i2s_speaker
+    source_speakers:
+      - id: toniebox_media_mixer_input
+        buffer_duration: 60ms
+      - id: toniebox_announcement_mixer_input
+        buffer_duration: 60ms
+
+  - platform: resampler
+    id: toniebox_media_resampling_input
+    output_speaker: toniebox_media_mixer_input
+    buffer_duration: 60ms
+
+  - platform: resampler
+    id: toniebox_announcement_resampling_input
+    output_speaker: toniebox_announcement_mixer_input
+    buffer_duration: 60ms
+
+# Advertised to Home Assistant; a streaming source such as Music Assistant
+# encodes to match. `format:` also decides which decoder gets compiled in.
+# These rates MUST equal the i2s speaker's sample_rate above.
+media_player:
+  - platform: speaker
+    id: toniebox_media_player
+    # Deliberately short: ESPHome prefixes friendly_name, so a longer name
+    # here would repeat the device name inside the entity ID.
+    name: "Speaker"
+    buffer_size: 32768  # the MP3 decoder itself costs ~116KB on top of this
+    media_pipeline:
+      speaker: toniebox_media_resampling_input
+      format: MP3
+      sample_rate: 44100
+      num_channels: 1
+    announcement_pipeline:
+      speaker: toniebox_announcement_resampling_input
+      format: MP3
+      sample_rate: 44100
+      num_channels: 1
+
+rtttl:
+  id: toniebox_rtttl
+  speaker: toniebox_i2s_speaker
+
+# Proves I2S -> DAC -> amp -> speaker with no network or decoder involved.
+# Useful as the first thing to try after a fresh flash.
+button:
+  - platform: template
+    name: "Play Test Tone"
+    id: play_test_tone
+    on_press:
+      - rtttl.play: "two_short:d=4,o=5,b=100:16e6,16e6"
+
+# Some board revisions populate an MMA8451 here instead. If setup fails to
+# find WHO_AM_I, that is likely why.
+lis3dh:
+  id: accelerometer
+  i2c_id: toniebox_i2c
+  address: 0x19
+  update_interval: 1s
+  x:
+    name: "Accelerometer X"
+    filters:
+      - delta: 0.02
+  y:
+    name: "Accelerometer Y"
+    filters:
+      - delta: 0.02
+  z:
+    name: "Accelerometer Z"
+    filters:
+      - delta: 0.02
+
+# DO NOT add gpio outputs for GPIO45 (POWER_GPIO) or GPIO47 (SD_POWER_GPIO).
+# GPIOBinaryOutput::setup() calls turn_off() at HARDWARE(800) -- after the bus
+# is already up -- which kills the peripheral rail out from under everything.
+# Those two pins belong to the on_boot lambda and nowhere else.
+output:
+  - platform: ledc
+    id: led_blue_output
+    pin: GPIO17
+  - platform: ledc
+    id: led_green_output
+    pin: GPIO18
+  - platform: ledc
+    id: led_red_output
+    pin: GPIO19
+
+light:
+  - platform: rgb
+    name: "LED"
+    red: led_red_output
+    green: led_green_output
+    blue: led_blue_output
+
+# The ear buttons are physical push-buttons, not capacitive touch.
+binary_sensor:
+  - platform: gpio
+    id: ear_big_button
+    name: "Ear Big Button"
+    pin:
+      number: GPIO20
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+  - platform: gpio
+    id: ear_small_button
+    name: "Ear Small Button"
+    pin:
+      number: GPIO21
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+  - platform: gpio
+    id: headphone_detect
+    name: "Headphone Detect"
+    pin: GPIO48
+
+# UNVERIFIED: the attenuation and divider ratio here are placeholders. Treat
+# these two readings as relative until you have calibrated them.
+sensor:
+  - platform: adc
+    id: charge_sense
+    name: "Charge Sense"
+    pin: GPIO8
+    attenuation: 12db
+    update_interval: 60s
+  - platform: adc
+    id: battery_voltage
+    name: "Battery Voltage"
+    pin: GPIO9
+    attenuation: 12db
+    update_interval: 60s

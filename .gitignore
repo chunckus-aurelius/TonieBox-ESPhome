@@ -1,0 +1,14 @@
+# Local secrets -- never commit. See README.md for the keys this config needs.
+secrets.yaml
+
+# ESPHome build output
+.esphome/
+.pioenvs/
+.piolibdeps/
+
+# Python bytecode from the component codegen
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
