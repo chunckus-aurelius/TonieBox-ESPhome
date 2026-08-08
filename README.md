@@ -11,9 +11,8 @@ Home Assistant and lets you decide what that means.
 
 > **Status:** working, but board-revision specific. The pin map comes from
 > rev v1.6.C. The `board:` key in the example config is a placeholder you
-> should confirm against your own module, and the two ADC sensors
-> (charge sense, battery voltage) are uncalibrated — treat those readings as
-> relative until you have checked them.
+> should confirm against your own module, and the two ADC sensors scale by
+> the rev v1.6.C resistor dividers — check yours if readings look wrong.
 
 ## Components
 

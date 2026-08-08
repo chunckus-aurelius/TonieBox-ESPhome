@@ -274,8 +274,8 @@ binary_sensor:
     name: "Headphone Detect"
     pin: GPIO48
 
-# UNVERIFIED: the attenuation and divider ratio here are placeholders. Treat
-# these two readings as relative until you have calibrated them.
+# Divider ratios from the toniebox-pcb pinout. Without them these report the
+# voltage at the pin, not the rail.
 sensor:
   - platform: adc
     id: charge_sense
@@ -283,9 +283,13 @@ sensor:
     pin: GPIO8
     attenuation: 12db
     update_interval: 60s
+    filters:
+      - multiply: 2.0   # R75/R72 100k/100k -- 5V charger rail
   - platform: adc
     id: battery_voltage
     name: "Battery Voltage"
     pin: GPIO9
     attenuation: 12db
     update_interval: 60s
+    filters:
+      - multiply: 4.03  # R57/R58 (100k+33k)/33k -- 3-cell NiMH, 3.6V nominal
