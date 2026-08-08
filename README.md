@@ -51,6 +51,10 @@ external_components:
 Then take [`TonieESP.yaml`](TonieESP.yaml) as your starting point. It is a
 complete working config, not a skeleton.
 
+Getting it onto the hardware — opening the shell, soldering the UART bridge,
+and flashing over ESPHome Web — is covered step by step in the
+[flashing guide](docs/flashing-guide.md).
+
 You will need a `secrets.yaml` alongside it defining:
 
 ```yaml
