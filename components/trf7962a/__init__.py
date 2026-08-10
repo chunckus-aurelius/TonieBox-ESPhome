@@ -23,6 +23,7 @@ TagRemovedTrigger = trf7962a_ns.class_(
 
 CONF_ON_TAG_PRESENT = "on_tag_present"
 CONF_ON_TAG_REMOVED = "on_tag_removed"
+CONF_REMOVAL_DEBOUNCE = "removal_debounce"
 
 CONFIG_SCHEMA = (
     cv.Schema(
@@ -34,6 +35,13 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_IRQ_PIN): cv.All(
                 cv.only_on_esp32, pins.internal_gpio_input_pin_schema
             ),
+            # How long a tag must stay unseen before on_tag_removed fires.
+            # A knock, or a figure shifting a few mm, loses reads for a poll
+            # or two, and flapping the media player is far worse than
+            # reacting late. Rounded down to whole polls, minimum one.
+            cv.Optional(
+                CONF_REMOVAL_DEBOUNCE, default="1500ms"
+            ): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_ON_TAG_PRESENT): automation.validate_automation(
                 {
                     cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(TagPresentTrigger),
@@ -55,6 +63,8 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await spi.register_spi_device(var, config)
+
+    cg.add(var.set_removal_debounce(config[CONF_REMOVAL_DEBOUNCE]))
 
     if CONF_IRQ_PIN in config:
         irq_pin = await cg.gpio_pin_expression(config[CONF_IRQ_PIN])

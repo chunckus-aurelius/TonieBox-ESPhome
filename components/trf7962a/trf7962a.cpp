@@ -59,7 +59,20 @@ static uint16_t iso15693_crc(const uint8_t *data, uint8_t length) {
 // A single INVENTORY can fail for reasons other than the tag being gone
 // (collision, the figure being lifted a few mm), and flapping the media
 // player on/off is much worse than reacting one poll late.
-static const uint8_t MISS_THRESHOLD = 3;
+// Derived from the `removal_debounce` YAML key against the update interval,
+// because "how long may the box be knocked for" is the thing worth tuning
+// and it must not silently change when the poll rate does. Never zero --
+// that would report removal on the very first missed read.
+static uint8_t miss_threshold_for(uint32_t debounce_ms, uint32_t interval_ms) {
+  if (interval_ms == 0)
+    return 1;
+  uint32_t polls = debounce_ms / interval_ms;
+  if (polls < 1)
+    polls = 1;
+  if (polls > 255)
+    polls = 255;
+  return static_cast<uint8_t>(polls);
+}
 
 // Command/address byte layout (TRF7962A datasheet, "Serial Interface"):
 //   bit7: 1=command, 0=register access
@@ -878,7 +891,7 @@ void TRF7962AComponent::update() {
 
   if (this->tag_present_) {
     // Debounce removal -- one missed poll is not proof the figure is gone.
-    if (++this->miss_count_ < MISS_THRESHOLD) {
+    if (++this->miss_count_ < miss_threshold_for(this->removal_debounce_ms_, this->get_update_interval())) {
       return;
     }
     this->tag_present_ = false;
@@ -895,6 +908,8 @@ void TRF7962AComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "TRF7962A:");
   LOG_PIN("  IRQ Pin: ", this->irq_pin_);
   LOG_UPDATE_INTERVAL(this);
+  ESP_LOGCONFIG(TAG, "  Removal debounce: %ums (%u polls)", this->removal_debounce_ms_,
+                miss_threshold_for(this->removal_debounce_ms_, this->get_update_interval()));
   if (!this->chip_ok_) {
     ESP_LOGE(TAG, "  Chip: NOT DETECTED");
     return;

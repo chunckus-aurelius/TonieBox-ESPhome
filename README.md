@@ -64,6 +64,67 @@ api_key: "..."       # base64 API encryption key
 ota_password: "..."
 ```
 
+## Stock Toniebox vs this firmware
+
+Stock behaviour is taken from the official tonies manual. Status is what runs
+on hardware today, not what is planned.
+
+**Legend:** ✅ working · 🟡 partial · ⬜ not started · ⛔ deliberately out of scope
+
+### Core playback
+
+| Stock function | Stock behaviour | Here | Notes |
+|---|---|---|---|
+| Play a Tonie | Place figure on top, audio starts | ✅ | Tag UID goes to Home Assistant as `tag_scanned`; HA/Music Assistant decides what plays |
+| Pause on removal | Lift the figure, playback pauses | 🟡 | Currently **stops** rather than pauses, so position is lost |
+| Resume position | Replacing the same figure resumes where it stopped, unless another was played in between | ⬜ | Stock keys this on last-played tag, not a timer |
+| Skip chapter | Tap either side of the box | ⬜ | Needs LIS3DH hardware click detection on INT1 (GPIO14, currently unused) |
+| Fast-forward / rewind | Tilt the box to one side | ⬜ | Separate gesture from the tap; direction is user-configurable in stock |
+| Volume | Squeeze big ear up, small ear down | ✅ | Short press, 50–800 ms |
+
+### Power
+
+| Stock function | Stock behaviour | Here | Notes |
+|---|---|---|---|
+| Turn on — ear | Press an ear | 🟡 | Big ear only. `ext0` takes a single wake pin; covering both ears plus the charger needs `ext1` |
+| Turn on — charger | Place on the charging station | ⬜ | Same `ext1` work. GPIO7 sits low while charging, so the mask must be built at sleep time or the box can never sleep on the charger |
+| Idle power off | Automatic after 10 minutes | ✅ | Deep sleep with a configurable `Sleep Timeout` in minutes. **Defaults to 0 (disabled)** so a fresh flash never sleeps until you opt in |
+| Manual power off | — | ✅ | Hold either ear 1–12 s, or the Power switch in Home Assistant |
+| Restart | Upside down + both ears ~10 s, off the charger | ⬜ | All three inputs are already available |
+| Factory reset | Upside down + both ears ~10 s, on the charger | ⛔ | Not implemented on purpose — there is no cloud state to reset, and it shares a gesture with restart |
+
+### Indicators
+
+| Stock function | Stock behaviour | Here | Notes |
+|---|---|---|---|
+| Ready | Steady green | ⬜ | LED is Home Assistant controlled; automatic status colour needs a precedence model first |
+| Low battery | Steady orange | ⬜ | Thresholds are known from the stock NVS dump: 3.60 V critical, 3.67/3.70 V low with 30 mV hysteresis |
+| Charging | Reported via LED | ✅ | Exposed as a `battery_charging` binary sensor instead |
+| Connecting / downloading | Pulsing and flashing blue | ⛔ | No Tonie cloud here; Wi-Fi state is visible in Home Assistant |
+| Error | Flashing red plus a spoken message | ⛔ | Errors surface in the ESPHome log |
+
+### Toniebox 2 features
+
+| Feature | Here | Notes |
+|---|---|---|
+| Sleep timer with light | ⬜ | Reachable — RGB LED plus the media player |
+| Sunrise alarm | ⬜ | Reachable, but a sleeping box cannot be woken by Home Assistant; needs the box awake or an RTC timer wake source |
+| Bluetooth headphones | ⛔ | No Bluetooth audio path on this hardware |
+| USB-C charging | ⛔ | Hardware |
+| Tonieplay games | ⛔ | Proprietary content |
+
+### Beyond stock
+
+Things this firmware does that no Toniebox does:
+
+- **Home Assistant native integration** — every sensor, the LED and the media player as first-class entities
+- **Music Assistant** — stream anything, not just Tonies; L/R channel split across two boxes via a Universal Group
+- **OTA updates** over Wi-Fi
+- **Battery and charge-rail voltage** as real numbers, not a colour
+- **Accelerometer readout** on all three axes
+- **NFC UID** exposed to HA, so any ISO 15693 tag can trigger any automation
+- **Test tone** button that proves I2S → DAC → amp → speaker with no network involved
+
 ## Things that will bite you
 
 The example config is heavily commented, and most of those comments exist

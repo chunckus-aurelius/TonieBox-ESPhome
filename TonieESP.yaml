@@ -14,31 +14,43 @@ esphome:
   # Powers the peripheral rails before the I2C bus comes up (BUS = 1000).
   # Both the priority and the single-lambda structure matter.
   on_boot:
-    priority: 1100
-    then:
-      # ONE LAMBDA ON PURPOSE. Do not split this into separate actions with
-      # `- delay:` between them: DelayAction is asynchronous and returns
-      # immediately, so the I2C bus would be created part-way through the
-      # power-up sequence and every device on it would fail to probe.
-      - lambda: |-
-          // --- audio_board_power(true) ---
-          gpio_reset_pin(GPIO_NUM_45);
-          gpio_set_direction(GPIO_NUM_45, GPIO_MODE_OUTPUT);
-          gpio_set_level(GPIO_NUM_45, 1);   // POWER_GPIO    -> HIGH
-          gpio_reset_pin(GPIO_NUM_47);
-          gpio_set_direction(GPIO_NUM_47, GPIO_MODE_OUTPUT);
-          gpio_set_level(GPIO_NUM_47, 0);   // SD_POWER_GPIO -> LOW (active low)
+    - priority: 1100
+      then:
+        # ONE LAMBDA ON PURPOSE. Do not split this into separate actions with
+        # `- delay:` between them: DelayAction is asynchronous and returns
+        # immediately, so the I2C bus would be created part-way through the
+        # power-up sequence and every device on it would fail to probe.
+        - lambda: |-
+            // Release the pin holds left behind by deep sleep, or the pads
+            // stay latched and the rails never come back.
+            gpio_deep_sleep_hold_dis();
+            gpio_hold_dis(GPIO_NUM_45);
+            gpio_hold_dis(GPIO_NUM_47);
 
-          // --- DAC3100 hardware reset pulse ---
-          gpio_reset_pin(GPIO_NUM_26);
-          gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);
-          gpio_set_level(GPIO_NUM_26, 0);   // into reset
-          delay(10);                        // BLOCKING on purpose
-          gpio_set_level(GPIO_NUM_26, 1);   // release
-          delay(10);
+            // --- audio_board_power(true) ---
+            gpio_reset_pin(GPIO_NUM_45);
+            gpio_set_direction(GPIO_NUM_45, GPIO_MODE_OUTPUT);
+            gpio_set_level(GPIO_NUM_45, 1);   // POWER_GPIO    -> HIGH
+            gpio_reset_pin(GPIO_NUM_47);
+            gpio_set_direction(GPIO_NUM_47, GPIO_MODE_OUTPUT);
+            gpio_set_level(GPIO_NUM_47, 0);   // SD_POWER_GPIO -> LOW (active low)
 
-          // Rail/codec settle before BUS(1000) creates the I2C bus.
-          delay(250);
+            // --- DAC3100 hardware reset pulse ---
+            gpio_reset_pin(GPIO_NUM_26);
+            gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);
+            gpio_set_level(GPIO_NUM_26, 0);   // into reset
+            delay(10);                        // BLOCKING on purpose
+            gpio_set_level(GPIO_NUM_26, 1);   // release
+            delay(10);
+
+            // Rail/codec settle before BUS(1000) creates the I2C bus.
+            delay(250);
+    # NOT the interlock -- that is the sleep_armed guard in box_power_down.
+    # begin_sleep(manual=true) skips the prevent_ check entirely, so this only
+    # blocks the non-manual re-entry from loop() after a KEEP_AWAKE deferral.
+    - priority: -100
+      then:
+        - deep_sleep.prevent: box_deep_sleep
 
 esp32:
   board: esp32-s3-devkitc-1  # placeholder -- confirm the exact module for your board
@@ -70,6 +82,9 @@ logger:
 api:
   encryption:
     key: !secret api_key
+  # The real sleep interlock. Nothing else in this file may set sleep_armed.
+  on_client_connected:
+    - lambda: 'id(sleep_armed) = true;'
 
 ota:
   - platform: esphome
@@ -123,9 +138,11 @@ trf7962a:
                 }
                 id(nfc_tag_uid).publish_state(buf);
             - homeassistant.tag_scanned: !lambda 'return id(nfc_tag_uid).state;'
+            - script.execute: idle_timer
   on_tag_removed:
     then:
       - lambda: 'id(nfc_tag_uid).publish_state("none");'
+      - script.execute: idle_timer
 
 text_sensor:
   - platform: template
@@ -193,6 +210,9 @@ media_player:
       format: MP3
       sample_rate: 44100
       num_channels: 1
+    # Playback counts as activity, so the box never sleeps mid-track.
+    on_state:
+      - script.execute: idle_timer
 
 rtttl:
   id: toniebox_rtttl
@@ -213,16 +233,21 @@ lis3dh:
   id: accelerometer
   i2c_id: toniebox_i2c
   address: 0x19
-  update_interval: 1s
+  # 250ms, not 1s: the movement LED below reads these, and a second of lag
+  # makes it feel broken. The delta filters keep HA traffic down regardless.
+  update_interval: 250ms
   x:
+    id: accel_x
     name: "Accelerometer X"
     filters:
       - delta: 0.02
   y:
+    id: accel_y
     name: "Accelerometer Y"
     filters:
       - delta: 0.02
   z:
+    id: accel_z
     name: "Accelerometer Z"
     filters:
       - delta: 0.02
@@ -242,8 +267,147 @@ output:
     id: led_red_output
     pin: GPIO19
 
+# Big ear wakes the box. GPIO20 is also the button binary_sensor above, hence
+# allow_other_uses on both. GPIO7 (WAKEUP_GPIO) is an OR of the small ear and
+# charger-present and would also work, but ext0 takes exactly one pin.
+deep_sleep:
+  id: box_deep_sleep
+  wakeup_pin:
+    number: GPIO20
+    allow_other_uses: true
+    mode:
+      input: true
+      pullup: true
+    inverted: true
+  wakeup_pin_mode: KEEP_AWAKE  # don't re-sleep while the ear is still held
+
+# restore_value MUST stay false. A persisted true would let the box sleep
+# before Home Assistant has ever connected, which is the whole thing this
+# prevents -- and a sleeping box cannot be reached by OTA.
+globals:
+  - id: sleep_armed
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+# 0 disables sleep entirely, and that is the shipped default: a fresh flash
+# never sleeps until someone opts in. Stock's own idle-off is 10 minutes.
+number:
+  - platform: template
+    id: sleep_timeout
+    name: "Sleep Timeout"
+    icon: "mdi:timer-outline"
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 120
+    step: 1
+    unit_of_measurement: min
+    mode: box
+    on_value:
+      - script.execute: idle_timer
+
+script:
+  # mode: restart -- every activity reset re-arms the countdown from zero.
+  - id: idle_timer
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: 'return id(sleep_timeout).state > 0;'
+          then:
+            - delay: !lambda 'return id(sleep_timeout).state * 60000;'
+            - script.execute: box_power_down
+
+  # The only path to sleep. Codec down, then both rails, then hold the pads
+  # through sleep -- without the hold they revert. Order follows teddybox's
+  # audio_board_poweroff().
+  - id: box_power_down
+    then:
+      # THE interlock. Everything below is unreachable until Home Assistant has
+      # connected once, so every boot has an OTA window no matter what got
+      # persisted. Do not remove it, do not add another setter of sleep_armed,
+      # and do not move this below the actions.
+      - if:
+          condition:
+            lambda: 'return id(sleep_armed);'
+          then:
+            - media_player.stop:
+            - light.turn_off: box_led
+            - lambda: |-
+                // --- dac3100_deinit() --- must precede the rail cut, the
+                // codec is powered from GPIO45.
+                uint8_t page0[2] = {0x00, 0x00};  // page select -> page 0
+                uint8_t reset[2] = {0x01, 0x01};  // SOFTWARE_RESET
+                id(toniebox_i2c)->write(0x18, page0, 2);
+                id(toniebox_i2c)->write(0x18, reset, 2);
+
+                // --- audio_board_power(false) ---
+                gpio_set_level(GPIO_NUM_45, 0);  // POWER_GPIO    -> LOW
+                gpio_set_level(GPIO_NUM_47, 1);  // SD_POWER_GPIO -> HIGH (active low)
+
+                // Both pads are outside the S3 RTC domain (GPIO0-21), so the
+                // hold is what keeps them put once the digital domain drops.
+                gpio_hold_en(GPIO_NUM_45);
+                gpio_hold_en(GPIO_NUM_47);
+                gpio_deep_sleep_hold_en();
+            - deep_sleep.allow: box_deep_sleep
+            - deep_sleep.enter: box_deep_sleep
+          else:
+            - logger.log: "power down refused: HA has never connected"
+
+  # Movement indicator. mode: restart so continued handling keeps it lit.
+  - id: movement_led
+    mode: restart
+    then:
+      - light.turn_on:
+          id: box_led
+          brightness: 60%
+          red: 100%
+          green: 100%
+          blue: 100%
+      - delay: 3s
+      - light.turn_off: box_led
+
+# Light the LED on REAL movement only. At rest the acceleration vector has a
+# magnitude of ~1G whatever the box's orientation, so deviation from 1G means
+# the box is actually being accelerated -- it does not fire on tilt, on a new
+# resting position, or on the +/-0.06G of sensor noise seen while it sits
+# still. Raise the threshold if a heavy footstep sets it off.
+interval:
+  - interval: 250ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              float x = id(accel_x).state, y = id(accel_y).state, z = id(accel_z).state;
+              if (isnan(x) || isnan(y) || isnan(z)) return false;
+              return fabsf(sqrtf(x * x + y * y + z * z) - 1.0f) > 0.15f;
+          then:
+            - script.execute: movement_led
+            - script.execute: idle_timer
+
+# Soft power. ALWAYS_ON, never RESTORE_*: a persisted OFF would fire
+# turn_off_action from setup() at priority 798, i.e. before wifi at 250 -- the
+# box would sleep half a second into every boot and never get an IP. That
+# happened, and esptool write_flash does not erase NVS, so it was permanent.
+switch:
+  - platform: template
+    id: box_power
+    name: "Power"
+    icon: "mdi:power"
+    optimistic: true
+    restore_mode: ALWAYS_ON
+    turn_on_action:
+      - script.execute: idle_timer
+    turn_off_action:
+      - script.execute: box_power_down
+
+
 light:
   - platform: rgb
+    id: box_led
     name: "LED"
     red: led_red_output
     green: led_green_output
@@ -256,10 +420,22 @@ binary_sensor:
     name: "Ear Big Button"
     pin:
       number: GPIO20
+      allow_other_uses: true  # also the deep sleep wakeup pin
       mode:
         input: true
         pullup: true
       inverted: true
+    on_click:
+      - min_length: 50ms
+        max_length: 800ms
+        then:
+          - media_player.volume_up:
+          - script.execute: idle_timer
+      # 12s, not 5s: measured holds run 8-11s and a 5s window is unhittable.
+      - min_length: 1s
+        max_length: 12s
+        then:
+          - switch.turn_on: box_power
   - platform: gpio
     id: ear_small_button
     name: "Ear Small Button"
@@ -269,6 +445,16 @@ binary_sensor:
         input: true
         pullup: true
       inverted: true
+    on_click:
+      - min_length: 50ms
+        max_length: 800ms
+        then:
+          - media_player.volume_down:
+          - script.execute: idle_timer
+      - min_length: 1s
+        max_length: 12s
+        then:
+          - switch.turn_off: box_power
   - platform: gpio
     id: headphone_detect
     name: "Headphone Detect"

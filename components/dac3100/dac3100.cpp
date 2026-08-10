@@ -41,7 +41,12 @@ void DAC3100Component::setup() {
   this->write_reg_(REG_HP_DRIVERS, 0x04);
   this->write_reg_(REG_HPL_DRIVER, 0x06);
   this->write_reg_(REG_HPR_DRIVER, 0x06);
-  this->write_reg_(REG_SPK_DRIVER, 0x1C);
+  // MUTED here on purpose (0x18 = bit2 clear); unmuted at the end of setup().
+  // 0x1C at this point enables the class-D driver before the DAC channels are
+  // powered up at REG_DAC_DATA_PATH_SETUP below, so the DAC coming online
+  // lands as a step into an already-live amp -- an audible pop on every
+  // power-up, and on every deep sleep wake since both run this same path.
+  this->write_reg_(REG_SPK_DRIVER, 0x18);
   this->write_reg_(REG_HP_DRIVERS, 0xC4);
   this->write_reg_(REG_SPK_AMP, 0x86);
   this->write_reg_(REG_L_VOL_TO_HPL, 0x92);
@@ -101,6 +106,20 @@ void DAC3100Component::setup() {
   this->write_reg_(REG_DAC_VOL_CTRL, 0x00);
 
   this->set_volume(this->volume_);
+
+  // UNMUTE THE SPEAKER DRIVER LAST -- this is the anti-pop step and the order
+  // is the whole point. Everything above has settled: the DAC channels are
+  // powered, unmuted and at their configured volume, and DATA_PATH_SETUP 0xD5
+  // enables soft-stepping so the output ramps rather than jumping. The delay
+  // lets that ramp finish before the driver starts passing signal.
+  //
+  // Must stay ABOVE read_back_registers_(), or dump_config() caches the muted
+  // 0x18 and reports a mute that is not real. Do not move it back up next to
+  // the other page 1 writes -- that is what made every board pop.
+  delay(50);
+  this->select_page_(0x01);
+  this->write_reg_(REG_SPK_DRIVER, 0x1C);
+  this->select_page_(0x00);
 
   this->read_back_registers_();
 }

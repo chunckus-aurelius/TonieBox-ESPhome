@@ -252,6 +252,7 @@ class TRF7962AComponent final : public PollingComponent,
                                                       spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
  public:
   void set_irq_pin(InternalGPIOPin *pin) { this->irq_pin_ = pin; }
+  void set_removal_debounce(uint32_t ms) { this->removal_debounce_ms_ = ms; }
   void add_listener(TRF7962AListener *listener) { this->listeners_.push_back(listener); }
 
   void setup() override;
@@ -352,6 +353,9 @@ class TRF7962AComponent final : public PollingComponent,
   // Consecutive failed inventory passes. A tag is only reported gone after
   // several misses -- see update() for why.
   uint8_t miss_count_{0};
+  // Grace period before a missing tag counts as removed, converted to whole
+  // polls in update(). Default matches the old hardcoded 3 polls at 500ms.
+  uint32_t removal_debounce_ms_{1500};
 };
 
 class TagPresentTrigger final : public Trigger<std::vector<uint8_t>>, public TRF7962AListener {
