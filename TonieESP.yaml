@@ -56,6 +56,17 @@ esp32:
   board: esp32-s3-devkitc-1  # placeholder -- confirm the exact module for your board
   framework:
     type: esp-idf
+    # The S3 console defaults to USB_SERIAL_JTAG, which is unreachable on this
+    # board -- GPIO19/20 are the red LED and the big ear, so there is no USB
+    # port and only ROM output ever reaches the solder pads. `logger:
+    # hardware_uart: UART0` alone is NOT enough: it moves ESPHome's app logger
+    # but not the IDF console, so the bootloader output still goes to USB and
+    # the wire cuts off at `entry 0x...`. That looks exactly like a board
+    # hanging in the bootloader when it is in fact booting fine. These force
+    # the IDF console itself onto UART0 and drop the unreachable USB secondary.
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: y
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: y
 
 # No psram: block -- PSRAM is absent on this hardware. Every buffer below has
 # to fit in internal SRAM, which is why the audio sizes are conservative.
@@ -74,6 +85,9 @@ external_components:
 
 logger:
   level: DEBUG
+  # Pairs with the console sdkconfig_options above, so the solder pads carry
+  # ESPHome's own log too and not just ROM output.
+  hardware_uart: UART0
   logs:
     # Sensor states log at ESP_LOGV per sensor per poll -- ~30 lines/sec here.
     sensor: INFO
