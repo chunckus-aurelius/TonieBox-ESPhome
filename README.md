@@ -88,7 +88,7 @@ on hardware today, not what is planned.
 |---|---|---|---|
 | Turn on — ear | Press an ear | 🟡 | Big ear only. `ext0` takes a single wake pin; covering both ears plus the charger needs `ext1` |
 | Turn on — charger | Place on the charging station | ⬜ | Same `ext1` work. GPIO7 sits low while charging, so the mask must be built at sleep time or the box can never sleep on the charger |
-| Idle power off | Automatic after 10 minutes | ✅ | Deep sleep with a configurable `Sleep Timeout` in minutes. **Defaults to 0 (disabled)** so a fresh flash never sleeps until you opt in |
+| Idle power off | Automatic after 10 minutes | ✅ | Deep sleep with a configurable `Sleep Timeout` in minutes. **Defaults to 5 minutes**; set it to 0 to disable sleep entirely |
 | Manual power off | — | ✅ | Hold either ear 1–12 s, or the Power switch in Home Assistant |
 | Restart | Upside down + both ears ~10 s, off the charger | ⬜ | All three inputs are already available |
 | Factory reset | Upside down + both ears ~10 s, on the charger | ⛔ | Not implemented on purpose — there is no cloud state to reset, and it shares a gesture with restart |
