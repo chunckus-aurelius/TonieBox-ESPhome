@@ -55,6 +55,11 @@ Getting it onto the hardware — opening the shell, soldering the UART bridge,
 and flashing over ESPHome Web — is covered step by step in the
 [flashing guide](docs/flashing-guide.md).
 
+Once it is running, the box reports events and Home Assistant decides what they
+mean. The [automations guide](docs/automations.md) has worked examples,
+including a single automation that serves every box you own by resolving which
+one a figure was placed on.
+
 You will need a `secrets.yaml` alongside it defining:
 
 ```yaml
