@@ -227,6 +227,7 @@ media_player:
     # Playback counts as activity, so the box never sleeps mid-track.
     on_state:
       - script.execute: idle_timer
+      - script.execute: clamp_volume
 
 rtttl:
   id: toniebox_rtttl
@@ -304,8 +305,8 @@ globals:
     restore_value: false
     initial_value: 'false'
 
-# 0 disables sleep entirely, and that is the shipped default: a fresh flash
-# never sleeps until someone opts in. Stock's own idle-off is 10 minutes.
+# Ships at 5 min idle; 0 disables sleep entirely. Stock's own idle-off is
+# 10 minutes.
 number:
   - platform: template
     id: sleep_timeout
@@ -313,7 +314,7 @@ number:
     icon: "mdi:timer-outline"
     optimistic: true
     restore_value: true
-    initial_value: 0
+    initial_value: 5
     min_value: 0
     max_value: 120
     step: 1
@@ -322,7 +323,38 @@ number:
     on_value:
       - script.execute: idle_timer
 
+  # Ceiling for every volume path: ears, Home Assistant and Music Assistant all
+  # land in the media player, which clamp_volume polices.
+  - platform: template
+    id: max_volume
+    name: "Max Volume"
+    icon: "mdi:volume-high"
+    optimistic: true
+    restore_value: true
+    initial_value: 70
+    min_value: 10
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+    mode: slider
+    on_value:
+      - script.execute: clamp_volume
+
 script:
+  # Pulls the volume back down whenever it exceeds the ceiling. Re-entrant --
+  # volume_set fires on_state, which calls this again -- so mode: restart, and
+  # the second pass no-ops because the condition is false by then.
+  - id: clamp_volume
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: 'return id(toniebox_media_player).volume > id(max_volume).state / 100.0f;'
+          then:
+            - media_player.volume_set:
+                id: toniebox_media_player
+                volume: !lambda 'return id(max_volume).state / 100.0f;'
+
   # mode: restart -- every activity reset re-arms the countdown from zero.
   - id: idle_timer
     mode: restart

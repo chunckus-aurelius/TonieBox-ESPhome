@@ -80,7 +80,7 @@ on hardware today, not what is planned.
 | Resume position | Replacing the same figure resumes where it stopped, unless another was played in between | ⬜ | Stock keys this on last-played tag, not a timer |
 | Skip chapter | Tap either side of the box | ⬜ | Needs LIS3DH hardware click detection on INT1 (GPIO14, currently unused) |
 | Fast-forward / rewind | Tilt the box to one side | ⬜ | Separate gesture from the tap; direction is user-configurable in stock |
-| Volume | Squeeze big ear up, small ear down | ✅ | Short press, 50–800 ms |
+| Volume | Squeeze big ear up, small ear down | ✅ | Short press, 50–800 ms. A `Max Volume` number caps every path — ears, Home Assistant, Music Assistant. Defaults to 70% |
 
 ### Power
 
