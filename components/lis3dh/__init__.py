@@ -29,6 +29,7 @@ LIS3DHClickTrigger = lis3dh_ns.class_(
 
 CONF_CLICK = "click"
 CONF_DOUBLE = "double"
+CONF_HPF = "high_pass_filter"
 CONF_TIME_LIMIT = "time_limit"
 CONF_TIME_LATENCY = "time_latency"
 CONF_TIME_WINDOW = "time_window"
@@ -61,13 +62,18 @@ def _accel_sensor_schema():
     )
 
 
-# Timing registers are counted in ODR periods, not milliseconds, so at the
-# 100Hz set in setup() one count is 10ms. Defaults are a starting point for
-# tuning and nothing more -- there is no reference driver to inherit known-good
-# values from. Expect to move them; see "Tap to skip" in docs/hardware-notes.md.
+# Timing registers count ODR periods, not milliseconds. Enabling click: raises
+# the rate to 400Hz, so one count is 2.5ms and these defaults mean roughly
+# 25ms limit / 50ms latency / 250ms window. They are the reference
+# implementation's own values, not guesses, but the threshold still has to be
+# found per box -- see "Tap to skip" in docs/hardware-notes.md.
 CLICK_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_DOUBLE, default=False): cv.boolean,
+        # The ST app note recommends the high-pass filter; the working
+        # reference implementation does not use it. Defaults to off for that
+        # reason. Try it if the downward-facing axis needs a harder tap.
+        cv.Optional(CONF_HPF, default=False): cv.boolean,
         cv.Optional(CONF_THRESHOLD, default=40): cv.int_range(min=1, max=127),
         cv.Optional(CONF_TIME_LIMIT, default=10): cv.int_range(min=0, max=255),
         cv.Optional(CONF_TIME_LATENCY, default=20): cv.int_range(min=0, max=255),
@@ -115,6 +121,7 @@ async def to_code(config):
         click = config[CONF_CLICK]
         cg.add(var.set_click_enabled(True))
         cg.add(var.set_click_double(click[CONF_DOUBLE]))
+        cg.add(var.set_click_hpf(click[CONF_HPF]))
         cg.add(var.set_click_threshold(click[CONF_THRESHOLD]))
         cg.add(var.set_click_time_limit(click[CONF_TIME_LIMIT]))
         cg.add(var.set_click_time_latency(click[CONF_TIME_LATENCY]))

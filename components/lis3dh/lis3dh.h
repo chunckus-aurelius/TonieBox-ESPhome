@@ -42,9 +42,10 @@ enum Lis3dhRegister : uint8_t {
 };
 
 // Click detection. teddybox defines these registers and the two CLICK_CFG
-// patterns below but only ever writes 0x00 to them, so there is NO reference
-// implementation to port here -- everything from this comment down is new
-// against the ST datasheet, not against a known-good driver.
+// patterns below but only ever writes 0x00 to them, so there is nothing to
+// port from it. The reference for this path is instead Adafruit_LIS3DH's
+// setClick(), which is known to work; where the ST app note and that library
+// disagree, the library wins.
 //
 // CLICK_CFG enables per-axis single (xS/yS/zS) or double (xD/yD/zD) detection.
 // 0x15 = 0b00010101 = single on Z,Y,X. 0x2A = 0b00101010 = double on Z,Y,X.
@@ -52,8 +53,9 @@ enum Lis3dhRegister : uint8_t {
 static const uint8_t LIS3DH_CLICK_CFG_SINGLE = 0x15;
 static const uint8_t LIS3DH_CLICK_CFG_DOUBLE = 0x2A;
 
-// CLICK_THS bit 7 latches CLICK_SRC until it is read. That is what makes
-// polling viable instead of an interrupt line -- see the note on INT1 below.
+// CLICK_THS bit 7 (LIR_Click). NOT set -- the reference implementation leaves
+// it clear and polls CLICK_SRC successfully, and latching is configured via
+// CTRL_REG5 instead. Kept documented so it is not "rediscovered" as a fix.
 static const uint8_t LIS3DH_CLICK_THS_LIR = 0x80;
 
 // CLICK_SRC bits. IA is the "an event happened" flag; SIGN distinguishes a
@@ -67,11 +69,20 @@ static const uint8_t LIS3DH_CLICK_SRC_SCLICK = 0x10;
 static const uint8_t LIS3DH_CLICK_SRC_DCLICK = 0x20;
 static const uint8_t LIS3DH_CLICK_SRC_IA = 0x40;
 
-// CTRL_REG2 bit 2 runs the click detector off the high-pass filter. Without
-// it the 1G gravity bias counts toward the threshold, so the axis pointing
-// down needs a much harder tap than the others. teddybox spells this
-// LIS3DH_HPF_CLICK.
+// CTRL_REG2 bit 2 runs the click detector off the high-pass filter. The ST app
+// note recommends it, to stop the 1G gravity bias counting toward the
+// threshold on whichever axis points down. Adafruit's working implementation
+// does NOT use it. Off by default for that reason -- matching something known
+// to work beats matching something recommended -- but exposed so it can be
+// tried if the down-axis turns out to need a harder tap.
 static const uint8_t LIS3DH_CTRL_REG2_HPCLICK = 0x04;
+
+// Routing and latching, both written by the reference implementation. Not
+// strictly needed when polling CLICK_SRC rather than watching INT1, but this
+// driver has been bitten before by copying a reference's conditions without
+// its control flow -- so write them as the reference does.
+static const uint8_t LIS3DH_CTRL_REG3_I1_CLICK = 0x80;
+static const uint8_t LIS3DH_CTRL_REG5_LIR_INT1 = 0x08;
 
 // How often loop() reads CLICK_SRC. Independent of update_interval on purpose.
 static const uint32_t LIS3DH_CLICK_POLL_MS = 50;
@@ -90,6 +101,11 @@ static const uint8_t LIS3DH_CTRL_REG1_AXES_ENABLE = 0x07;
 // 100Hz in the ODR nibble (CTRL_REG1 bits 7:4) -- comfortably above the
 // component's default 100ms poll so each update() sees fresh data.
 static const uint8_t LIS3DH_ODR_100HZ = 0x50;
+// 400Hz whenever click detection is on. A tap is a a few-millisecond transient;
+// at 100Hz (one sample per 10ms) it can fall entirely between samples, which is
+// the rate every working LIS3DH tap implementation avoids. Adafruit's library
+// -- the reference for the click path, since teddybox has none -- runs 400Hz.
+static const uint8_t LIS3DH_ODR_400HZ = 0x70;
 
 // CTRL_REG4 bits 5:4 select full scale. Values match teddybox
 // lis3dh_get_range()'s decode of (CTRL_REG4 & 0x30) >> 4.
@@ -116,6 +132,7 @@ class LIS3DHComponent final : public PollingComponent, public i2c::I2CDevice {
 
   void set_click_enabled(bool enabled) { this->click_enabled_ = enabled; }
   void set_click_double(bool dbl) { this->click_double_ = dbl; }
+  void set_click_hpf(bool hpf) { this->click_hpf_ = hpf; }
 
   // Live setters: each writes its register immediately when the part is up,
   // so these can be driven from Home Assistant number entities. Tuning a tap
@@ -140,6 +157,7 @@ class LIS3DHComponent final : public PollingComponent, public i2c::I2CDevice {
 
   bool click_enabled_{false};
   bool click_double_{false};
+  bool click_hpf_{false};
   uint8_t click_threshold_{40};
   uint8_t click_time_limit_{10};
   uint8_t click_time_latency_{20};

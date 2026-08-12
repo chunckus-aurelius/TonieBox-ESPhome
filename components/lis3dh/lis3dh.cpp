@@ -21,7 +21,9 @@ void LIS3DHComponent::setup() {
   // rate first, then clear the remaining control/interrupt registers so the
   // part comes up in a defined state regardless of what the stock firmware
   // (or a warm reset) left behind.
-  this->write_byte(REG_CTRL_REG1, LIS3DH_ODR_100HZ | LIS3DH_CTRL_REG1_AXES_ENABLE);
+  // Click detection needs the faster rate; see LIS3DH_ODR_400HZ in the header.
+  const uint8_t odr = this->click_enabled_ ? LIS3DH_ODR_400HZ : LIS3DH_ODR_100HZ;
+  this->write_byte(REG_CTRL_REG1, odr | LIS3DH_CTRL_REG1_AXES_ENABLE);
   this->write_byte(REG_CTRL_REG2, 0x00);
   this->write_byte(REG_CTRL_REG3, 0x00);
   // CTRL_REG4: full-scale in bits 5:4. BDU is deliberately left clear to
@@ -37,12 +39,11 @@ void LIS3DHComponent::setup() {
   this->write_click_config_();
 }
 
-// INT1 (GPIO14) is deliberately NOT used. CLICK_THS bit 7 latches CLICK_SRC
-// until it is read, so polling at the component's update interval catches
-// every event -- the latch is what makes the pin redundant. That keeps the
-// I2C read out of an ISR context, where it could not run anyway, and leaves
-// GPIO14 free. The cost is up to one update interval of latency, which at
-// 100ms is imperceptible for a skip gesture.
+// INT1 (GPIO14) is deliberately NOT used. CLICK_SRC is read on a 50ms timer in
+// loop() instead, exactly as the reference implementation polls it, which keeps
+// the I2C read out of an ISR context where it could not run anyway and leaves
+// GPIO14 free. CTRL_REG3/CTRL_REG5 below still configure the interrupt as the
+// reference does; nothing watches the pin.
 void LIS3DHComponent::write_click_config_() {
   if (!this->initialized_)
     return;
@@ -58,11 +59,18 @@ void LIS3DHComponent::write_click_config_() {
     return;
   }
 
-  // High-pass the click detector first, or gravity biases whichever axis is
-  // pointing down and that side needs a far harder tap than the others.
-  this->write_byte(REG_CTRL_REG2, LIS3DH_CTRL_REG2_HPCLICK);
+  // Order and content follow Adafruit_LIS3DH::setClick(), which is the only
+  // implementation of this path known to actually work. Deviating from a
+  // working reference on theory is what the comment in update() is about.
+  this->write_byte(REG_CTRL_REG2, this->click_hpf_ ? LIS3DH_CTRL_REG2_HPCLICK : 0x00);
+  this->write_byte(REG_CTRL_REG3, LIS3DH_CTRL_REG3_I1_CLICK);
+  this->write_byte(REG_CTRL_REG5, LIS3DH_CTRL_REG5_LIR_INT1);
   this->write_byte(REG_CLICK_CFG, this->click_double_ ? LIS3DH_CLICK_CFG_DOUBLE : LIS3DH_CLICK_CFG_SINGLE);
-  this->write_byte(REG_CLICK_THS, static_cast<uint8_t>((this->click_threshold_ & 0x7F) | LIS3DH_CLICK_THS_LIR));
+  // Threshold goes in raw, WITHOUT the LIR bit. An earlier revision set it on
+  // the theory that it latches CLICK_SRC for polling; the reference does not
+  // set it and reads CLICK_SRC the same way, and CTRL_REG5 above is where
+  // latching actually gets configured.
+  this->write_byte(REG_CLICK_THS, static_cast<uint8_t>(this->click_threshold_ & 0x7F));
   this->write_byte(REG_TIME_LIMIT, this->click_time_limit_);
   this->write_byte(REG_TIME_LATENCY, this->click_time_latency_);
   this->write_byte(REG_TIME_WINDOW, this->click_time_window_);
@@ -209,9 +217,24 @@ void LIS3DHComponent::dump_config() {
   }
   ESP_LOGCONFIG(TAG, "  Range: +/-%dg", this->range_g_());
   if (this->click_enabled_) {
-    ESP_LOGCONFIG(TAG, "  Click: %s, threshold %u, limit %u, latency %u, window %u",
+    ESP_LOGCONFIG(TAG, "  Click: %s, threshold %u, limit %u, latency %u, window %u, hpf %s",
                   this->click_double_ ? "double" : "single", this->click_threshold_, this->click_time_limit_,
-                  this->click_time_latency_, this->click_time_window_);
+                  this->click_time_latency_, this->click_time_window_, this->click_hpf_ ? "on" : "off");
+    // Read the registers back rather than reprinting what we meant to write.
+    // A silently rejected write and a correct one look identical otherwise,
+    // and this project has burned flash cycles on exactly that ambiguity.
+    const uint8_t regs[] = {REG_CTRL_REG1, REG_CTRL_REG2,  REG_CTRL_REG3, REG_CTRL_REG5,
+                            REG_CLICK_CFG, REG_CLICK_THS, REG_TIME_LIMIT};
+    const char *names[] = {"CTRL_REG1", "CTRL_REG2", "CTRL_REG3", "CTRL_REG5",
+                           "CLICK_CFG", "CLICK_THS", "TIME_LIMIT"};
+    for (size_t i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
+      uint8_t v = 0;
+      if (this->read_byte(regs[i], &v)) {
+        ESP_LOGCONFIG(TAG, "    %s (0x%02X) = 0x%02X", names[i], regs[i], v);
+      } else {
+        ESP_LOGCONFIG(TAG, "    %s (0x%02X) = READ FAILED", names[i], regs[i]);
+      }
+    }
   }
   LOG_SENSOR("  ", "X", this->x_sensor_);
   LOG_SENSOR("  ", "Y", this->y_sensor_);
