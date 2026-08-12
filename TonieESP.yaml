@@ -308,6 +308,15 @@ globals:
     restore_value: false
     initial_value: 'false'
 
+  # Last percentage measured OFF the charger. restore_value is safe here and
+  # necessary: every wake from deep sleep is a cold boot, so without NVS a box
+  # that lives on its charger would read unknown forever. -1 means never yet
+  # measured. Inert on restore -- unlike a switch, no action fires from it.
+  - id: last_battery_pct
+    type: float
+    restore_value: true
+    initial_value: '-1'
+
 # Ships at 5 min idle; 0 disables sleep entirely. Stock's own idle-off is
 # 10 minutes.
 number:
@@ -562,20 +571,31 @@ sensor:
     lambda: |-
       const float v = id(battery_voltage).state;
       if (isnan(v)) return {};
-      // Charging drives the pack to 4.35-4.65V, way off the resting curve, so
-      // any estimate now would read full and then collapse on unplug.
-      // Returning {} publishes nothing, holding the last on-battery value.
-      if (id(charge_sense).state > 4.0f) return {};
+
+      // On the charger the pack is driven to 4.35-4.65V, far off the resting
+      // curve, so voltage says nothing about state of charge. Report the last
+      // reading taken off the charger rather than a fake 100%. Stale, but
+      // stale in the safe direction -- it under-reports while charging.
+      if (id(charge_sense).state > 4.0f) {
+        if (id(last_battery_pct) < 0.0f) return {};  // never measured yet
+        return id(last_battery_pct);
+      }
+
       static const float pts[][2] = {
         {3.00f,   0.0f}, {3.30f,   5.0f}, {3.60f,  15.0f}, {3.67f, 30.0f},
         {3.70f,  45.0f}, {3.80f,  70.0f}, {3.90f,  88.0f}, {4.05f, 100.0f}};
       const int n = sizeof(pts) / sizeof(pts[0]);
-      if (v <= pts[0][0]) return 0.0f;
-      if (v >= pts[n - 1][0]) return 100.0f;
-      for (int i = 1; i < n; i++) {
-        if (v <= pts[i][0]) {
-          const float t = (v - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
-          return pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1]);
+      float pct = 100.0f;
+      if (v <= pts[0][0]) {
+        pct = 0.0f;
+      } else if (v < pts[n - 1][0]) {
+        for (int i = 1; i < n; i++) {
+          if (v <= pts[i][0]) {
+            const float t = (v - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
+            pct = pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1]);
+            break;
+          }
         }
       }
-      return {};
+      id(last_battery_pct) = pct;
+      return pct;
