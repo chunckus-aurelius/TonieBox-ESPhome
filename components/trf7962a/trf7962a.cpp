@@ -3,6 +3,7 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 
+#include <cinttypes>
 #include <cstring>
 
 namespace esphome {
@@ -764,11 +765,11 @@ bool TRF7962AComponent::set_password_(uint32_t password) {
   // Reference checks trfRxLength == 1 (flags only), which now matches ours
   // directly since read_packet_ strips the CRC.
   if (response_length != 1 || response[0] != 0x00) {
-    ESP_LOGD(TAG, "SET_PASSWORD %08X: %u bytes, flags 0x%02X", password, response_length,
+    ESP_LOGD(TAG, "SET_PASSWORD %08" PRIX32 ": %u bytes, flags 0x%02X", password, response_length,
              response_length ? response[0] : 0);
     return false;
   }
-  ESP_LOGI(TAG, "SLIX unlocked with password %08X", password);
+  ESP_LOGI(TAG, "SLIX unlocked with password %08" PRIX32, password);
   return true;
 }
 
@@ -866,7 +867,8 @@ void TRF7962AComponent::update() {
 
   if (!found && this->fail_count_++ % 20 == 0) {
     uint8_t rssi = this->read_register_(REG_RSSI_LEVELS);
-    ESP_LOGD(TAG, "No tag (%u consecutive), RSSI 0x%02X (main %u, aux %u)", this->fail_count_, rssi, rssi & 0x07,
+    ESP_LOGD(TAG, "No tag (%" PRIu32 " consecutive), RSSI 0x%02X (main %u, aux %u)", this->fail_count_, rssi,
+             rssi & 0x07,
              (rssi >> 3) & 0x07);
   }
   if (found) {
@@ -908,7 +910,7 @@ void TRF7962AComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "TRF7962A:");
   LOG_PIN("  IRQ Pin: ", this->irq_pin_);
   LOG_UPDATE_INTERVAL(this);
-  ESP_LOGCONFIG(TAG, "  Removal debounce: %ums (%u polls)", this->removal_debounce_ms_,
+  ESP_LOGCONFIG(TAG, "  Removal debounce: %" PRIu32 "ms (%u polls)", this->removal_debounce_ms_,
                 miss_threshold_for(this->removal_debounce_ms_, this->get_update_interval()));
   if (!this->chip_ok_) {
     ESP_LOGE(TAG, "  Chip: NOT DETECTED");
