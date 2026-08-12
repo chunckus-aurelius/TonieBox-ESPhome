@@ -20,7 +20,7 @@ Home Assistant and lets you decide what that means.
 |------------|-----|---------|
 | `trf7962a` | SPI | TI TRF7962A ISO15693 / SLIX NFC reader — fires `on_tag_present` / `on_tag_removed` and reports the UID |
 | `dac3100`  | I2C | TI TLV320DAC3100 I2S audio codec — clocking, output routing, volume, mute |
-| `lis3dh`   | I2C | ST LIS3DH 3-axis accelerometer — X/Y/Z as sensors |
+| `lis3dh`   | I2C | ST LIS3DH 3-axis accelerometer — X/Y/Z as sensors, plus optional hardware tap detection via `click:` |
 
 Each reads its configuration back at the end of `setup()` and prints it in
 `dump_config()`, so a codec that ACKs on I2C but is silent, or an init table
@@ -60,6 +60,39 @@ mean. The [automations guide](docs/automations.md) has worked examples,
 including a single automation that serves every box you own by resolving which
 one a figure was placed on.
 
+### Tap detection
+
+`lis3dh` can use the LIS3DH's hardware click detector, which the example config
+leaves off because the threshold depends on the box and how hard you tap:
+
+```yaml
+lis3dh:
+  id: accelerometer
+  click:
+    threshold: 40       # 1-127, in units of full-scale/128
+    time_limit: 10      # counts of the ODR period
+    time_latency: 20
+    time_window: 100
+    on_click:
+      - logger.log:
+          format: "tap: CLICK_SRC=0x%02X"
+          args: ['src']
+```
+
+`src` is the raw `CLICK_SRC` byte, so `on_click` can tell which axis was struck
+and on which side — bit 0/1/2 for X/Y/Z, bit 3 for the sign. Two things worth
+knowing before wiring it to anything:
+
+- Enabling `click:` raises the accelerometer to **400 Hz**. At the 100 Hz used
+  otherwise, a tap transient falls between samples and nothing fires. This costs
+  a little more current, which matters on battery.
+- A single physical tap usually trips **two or three axes** ~100–230 ms apart.
+  Debounce in your automation or in `on_click`, or a tap-to-skip will skip
+  twice.
+
+`dump_config` reads the click registers back off the chip, so a misapplied
+setting is visible in the boot log rather than as silence.
+
 You will need a `secrets.yaml` alongside it defining:
 
 ```yaml
@@ -81,9 +114,9 @@ on hardware today, not what is planned.
 | Stock function | Stock behaviour | Here | Notes |
 |---|---|---|---|
 | Play a Tonie | Place figure on top, audio starts | ✅ | Tag UID goes to Home Assistant as `tag_scanned`; HA/Music Assistant decides what plays |
-| Pause on removal | Lift the figure, playback pauses | 🟡 | Currently **stops** rather than pauses, so position is lost |
+| Pause on removal | Lift the figure, playback pauses | 🟡 | The box reports removal; pausing is a Home Assistant automation — see the [automations guide](docs/automations.md). Removal is debounced 3 s in `trf7962a`, so a knocked figure does not trigger it |
 | Resume position | Replacing the same figure resumes where it stopped, unless another was played in between | ⬜ | Stock keys this on last-played tag, not a timer |
-| Skip chapter | Tap either side of the box | ⬜ | Needs LIS3DH hardware click detection on INT1 (GPIO14, currently unused) |
+| Skip chapter | Tap either side of the box | 🟡 | `lis3dh` supports it — set `click:` and bind `on_click`. Proven on hardware, but **not enabled in the example config**, since the threshold needs tuning per box. GPIO14/INT1 is not used: CLICK_SRC is polled instead |
 | Fast-forward / rewind | Tilt the box to one side | ⬜ | Separate gesture from the tap; direction is user-configurable in stock |
 | Volume | Squeeze big ear up, small ear down | ✅ | Short press, 50–800 ms. A `Max Volume` number caps every path — ears, Home Assistant, Music Assistant. Defaults to 70% |
 
@@ -103,8 +136,8 @@ on hardware today, not what is planned.
 | Stock function | Stock behaviour | Here | Notes |
 |---|---|---|---|
 | Ready | Steady green | ✅ | Green from boot until the box sleeps, so a wake is visible before any audio plays. Low battery and error colours still need a precedence model |
-| Low battery | Steady orange | ⬜ | LED colour still needs the precedence model, but a `Battery` % sensor now exposes the estimate. Thresholds from the stock NVS dump: 3.60 V critical, 3.67/3.70 V low with 30 mV hysteresis |
-| Charging | Reported via LED | ✅ | Exposed as a `battery_charging` binary sensor instead |
+| Low battery | Steady orange | 🟡 | A `Battery` % sensor exposes the estimate, but nothing drives the LED from it yet — that needs a colour precedence model. Thresholds from the stock NVS dump: 3.60 V critical, 3.67/3.70 V low with 30 mV hysteresis |
+| Charging | Reported via LED | 🟡 | The `Charge Sense` ADC reads the charger rail directly (~4.9 V present, 0 V absent), so charging is visible as a number. No binary sensor in the example config |
 | Connecting / downloading | Pulsing and flashing blue | ⛔ | No Tonie cloud here; Wi-Fi state is visible in Home Assistant |
 | Error | Flashing red plus a spoken message | ⛔ | Errors surface in the ESPHome log |
 
@@ -125,8 +158,9 @@ Things this firmware does that no Toniebox does:
 - **Home Assistant native integration** — every sensor, the LED and the media player as first-class entities
 - **Music Assistant** — stream anything, not just Tonies; L/R channel split across two boxes via a Universal Group
 - **OTA updates** over Wi-Fi
-- **Battery and charge-rail voltage** as real numbers, not a colour
-- **Accelerometer readout** on all three axes
+- **Battery and charge-rail voltage** as real numbers, not a colour, plus a
+  `Battery` percentage estimated from the pack curve
+- **Accelerometer readout** on all three axes, and hardware tap detection
 - **NFC UID** exposed to HA, so any ISO 15693 tag can trigger any automation
 - **Test tone** button that proves I2S → DAC → amp → speaker with no network involved
 
