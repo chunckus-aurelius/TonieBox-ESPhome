@@ -97,7 +97,7 @@ on hardware today, not what is planned.
 
 | Stock function | Stock behaviour | Here | Notes |
 |---|---|---|---|
-| Ready | Steady green | ⬜ | LED is Home Assistant controlled; automatic status colour needs a precedence model first |
+| Ready | Steady green | ✅ | Green from boot until the box sleeps, so a wake is visible before any audio plays. Low battery and error colours still need a precedence model |
 | Low battery | Steady orange | ⬜ | Thresholds are known from the stock NVS dump: 3.60 V critical, 3.67/3.70 V low with 30 mV hysteresis |
 | Charging | Reported via LED | ✅ | Exposed as a `battery_charging` binary sensor instead |
 | Connecting / downloading | Pulsing and flashing blue | ⛔ | No Tonie cloud here; Wi-Fi state is visible in Home Assistant |

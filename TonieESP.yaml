@@ -51,6 +51,9 @@ esphome:
     - priority: -100
       then:
         - deep_sleep.prevent: box_deep_sleep
+        # Earliest point the light component is up. Lighting here rather than
+        # waiting on the API means the box shows awake during the boot silence.
+        - script.execute: led_awake
 
 esp32:
   board: esp32-s3-devkitc-1  # placeholder -- confirm the exact module for your board
@@ -341,6 +344,19 @@ number:
       - script.execute: clamp_volume
 
 script:
+  # Steady green = awake and listening. The only other feedback that a wake
+  # worked is audio, so without this the box looks dead until it plays.
+  # 70% because anything under ~60% is not visible through the shell -- 25%
+  # measured as indistinguishable from off. box_power_down darkens it again.
+  - id: led_awake
+    then:
+      - light.turn_on:
+          id: box_led
+          brightness: 70%
+          red: 0%
+          green: 100%
+          blue: 0%
+
   # Pulls the volume back down whenever it exceeds the ceiling. Re-entrant --
   # volume_set fires on_state, which calls this again -- so mode: restart, and
   # the second pass no-ops because the condition is false by then.
@@ -414,7 +430,9 @@ script:
           green: 100%
           blue: 100%
       - delay: 3s
-      - light.turn_off: box_led
+      # Back to the awake indicator, NOT off -- picking the box up is how you
+      # wake it, so turning off here would kill the indicator 3s after boot.
+      - script.execute: led_awake
 
 # Light the LED on REAL movement only. At rest the acceleration vector has a
 # magnitude of ~1G whatever the box's orientation, so deviation from 1G means
@@ -447,6 +465,7 @@ switch:
     restore_mode: ALWAYS_ON
     turn_on_action:
       - script.execute: idle_timer
+      - script.execute: led_awake
     turn_off_action:
       - script.execute: box_power_down
 
