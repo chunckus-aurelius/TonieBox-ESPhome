@@ -544,3 +544,38 @@ sensor:
     update_interval: 60s
     filters:
       - multiply: 4.03  # R57/R58 (100k+33k)/33k -- 3-cell NiMH, 3.6V nominal
+
+  # Rough state-of-charge, NOT a gauge -- voltage is a poor SoC proxy for NiMH
+  # and sags under audio load. Curve anchors and accuracy limits are in
+  # docs/hardware-notes.md "Battery percentage".
+  - platform: template
+    id: battery_level
+    name: "Battery"
+    device_class: battery
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 60s
+    filters:
+      - median:
+          window_size: 5
+          send_every: 1
+    lambda: |-
+      const float v = id(battery_voltage).state;
+      if (isnan(v)) return {};
+      // Charging drives the pack to 4.35-4.65V, way off the resting curve, so
+      // any estimate now would read full and then collapse on unplug.
+      // Returning {} publishes nothing, holding the last on-battery value.
+      if (id(charge_sense).state > 4.0f) return {};
+      static const float pts[][2] = {
+        {3.00f,   0.0f}, {3.30f,   5.0f}, {3.60f,  15.0f}, {3.67f, 30.0f},
+        {3.70f,  45.0f}, {3.80f,  70.0f}, {3.90f,  88.0f}, {4.05f, 100.0f}};
+      const int n = sizeof(pts) / sizeof(pts[0]);
+      if (v <= pts[0][0]) return 0.0f;
+      if (v >= pts[n - 1][0]) return 100.0f;
+      for (int i = 1; i < n; i++) {
+        if (v <= pts[i][0]) {
+          const float t = (v - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
+          return pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1]);
+        }
+      }
+      return {};
