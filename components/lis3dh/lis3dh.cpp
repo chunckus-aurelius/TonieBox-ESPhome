@@ -34,6 +34,77 @@ void LIS3DHComponent::setup() {
   this->write_byte(REG_INT1_DURATION, 0x00);
 
   this->initialized_ = true;
+  this->write_click_config_();
+}
+
+// INT1 (GPIO14) is deliberately NOT used. CLICK_THS bit 7 latches CLICK_SRC
+// until it is read, so polling at the component's update interval catches
+// every event -- the latch is what makes the pin redundant. That keeps the
+// I2C read out of an ISR context, where it could not run anyway, and leaves
+// GPIO14 free. The cost is up to one update interval of latency, which at
+// 100ms is imperceptible for a skip gesture.
+void LIS3DHComponent::write_click_config_() {
+  if (!this->initialized_)
+    return;
+
+  if (!this->click_enabled_) {
+    // Match teddybox lis3dh_init(), which clears all five click registers so
+    // the part comes up defined regardless of what stock firmware left behind.
+    this->write_byte(REG_CLICK_CFG, 0x00);
+    this->write_byte(REG_CLICK_THS, 0x00);
+    this->write_byte(REG_TIME_LIMIT, 0x00);
+    this->write_byte(REG_TIME_LATENCY, 0x00);
+    this->write_byte(REG_TIME_WINDOW, 0x00);
+    return;
+  }
+
+  // High-pass the click detector first, or gravity biases whichever axis is
+  // pointing down and that side needs a far harder tap than the others.
+  this->write_byte(REG_CTRL_REG2, LIS3DH_CTRL_REG2_HPCLICK);
+  this->write_byte(REG_CLICK_CFG, this->click_double_ ? LIS3DH_CLICK_CFG_DOUBLE : LIS3DH_CLICK_CFG_SINGLE);
+  this->write_byte(REG_CLICK_THS, static_cast<uint8_t>((this->click_threshold_ & 0x7F) | LIS3DH_CLICK_THS_LIR));
+  this->write_byte(REG_TIME_LIMIT, this->click_time_limit_);
+  this->write_byte(REG_TIME_LATENCY, this->click_time_latency_);
+  this->write_byte(REG_TIME_WINDOW, this->click_time_window_);
+}
+
+void LIS3DHComponent::set_click_threshold(uint8_t ths) {
+  this->click_threshold_ = ths;
+  this->write_click_config_();
+}
+void LIS3DHComponent::set_click_time_limit(uint8_t limit) {
+  this->click_time_limit_ = limit;
+  this->write_click_config_();
+}
+void LIS3DHComponent::set_click_time_latency(uint8_t latency) {
+  this->click_time_latency_ = latency;
+  this->write_click_config_();
+}
+void LIS3DHComponent::set_click_time_window(uint8_t window) {
+  this->click_time_window_ = window;
+  this->write_click_config_();
+}
+
+// Reading CLICK_SRC is what clears the latch, so this must run every cycle
+// once click is enabled -- skipping it would wedge the detector on the first
+// tap and nothing would fire again.
+void LIS3DHComponent::poll_click_() {
+  uint8_t src = 0;
+  if (!this->read_byte(REG_CLICK_SRC, &src))
+    return;
+  if ((src & LIS3DH_CLICK_SRC_IA) == 0)
+    return;
+
+  // The SCLICK bit is set for the first tap of a double too, so when we asked
+  // for doubles a single-only event is a partial gesture and not ours.
+  const bool want = this->click_double_ ? (src & LIS3DH_CLICK_SRC_DCLICK) : (src & LIS3DH_CLICK_SRC_SCLICK);
+  if (!want)
+    return;
+
+  ESP_LOGD(TAG, "Click: CLICK_SRC=0x%02X (%s%s%s%s)", src, (src & LIS3DH_CLICK_SRC_X) ? "X" : "",
+           (src & LIS3DH_CLICK_SRC_Y) ? "Y" : "", (src & LIS3DH_CLICK_SRC_Z) ? "Z" : "",
+           (src & LIS3DH_CLICK_SRC_SIGN) ? " neg" : " pos");
+  this->click_callback_.call(src);
 }
 
 uint8_t LIS3DHComponent::range_g_() const {
@@ -116,6 +187,20 @@ void LIS3DHComponent::update() {
     this->z_sensor_->publish_state(this->counts_to_g_(raw_z));
 }
 
+// Click polling lives here rather than in update() because the two want very
+// different rates: the configs set update_interval: 1s to keep accelerometer
+// publishes down, and a tap answered up to a second later feels broken. The
+// latch means nothing is lost at any rate -- this is purely about latency.
+void LIS3DHComponent::loop() {
+  if (!this->initialized_ || !this->click_enabled_)
+    return;
+  const uint32_t now = millis();
+  if (now - this->last_click_poll_ < LIS3DH_CLICK_POLL_MS)
+    return;
+  this->last_click_poll_ = now;
+  this->poll_click_();
+}
+
 void LIS3DHComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "LIS3DH:");
   LOG_I2C_DEVICE(this);
@@ -123,6 +208,11 @@ void LIS3DHComponent::dump_config() {
     ESP_LOGE(TAG, "Communication with LIS3DH failed!");
   }
   ESP_LOGCONFIG(TAG, "  Range: +/-%dg", this->range_g_());
+  if (this->click_enabled_) {
+    ESP_LOGCONFIG(TAG, "  Click: %s, threshold %u, limit %u, latency %u, window %u",
+                  this->click_double_ ? "double" : "single", this->click_threshold_, this->click_time_limit_,
+                  this->click_time_latency_, this->click_time_window_);
+  }
   LOG_SENSOR("  ", "X", this->x_sensor_);
   LOG_SENSOR("  ", "Y", this->y_sensor_);
   LOG_SENSOR("  ", "Z", this->z_sensor_);
