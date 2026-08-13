@@ -326,9 +326,7 @@ class TRF7962AComponent final : public PollingComponent,
   // component owns it rather than the delegate.
   GPIOPin *cs_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};
-  // Edge count as of read_packet_'s last drain, so it can tell "no edge
-  // happened" apart from "an edge happened but the register already moved
-  // on to a later state" -- see Trf7962aIrqStore's comment.
+  // Wired up in setup() but never consulted -- see Trf7962aIrqStore's comment.
   Trf7962aIrqStore irq_store_;
   std::vector<TRF7962AListener *> listeners_;
   std::vector<uint8_t> current_uid_;

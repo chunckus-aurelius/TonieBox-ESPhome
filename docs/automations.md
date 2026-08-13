@@ -112,16 +112,37 @@ one line here, not copying the automation.
 Pair it with a resume automation keyed on the same sensor leaving `none`, and
 you have stock's pause-on-lift behaviour.
 
-Tag removal is debounced in the firmware (3 s by default, `removal_debounce` on
-the `trf7962a` component). A figure knocked askew and put straight back does not
-trigger this.
+Tag removal is debounced in the firmware (1.5 s by default, `removal_debounce`
+on the `trf7962a` component). A figure knocked askew and put straight back does
+not trigger this.
 
 ---
 
 ## Tap gestures
 
-Boxes with `click:` configured on the `lis3dh` component fire an
-`esphome.tonie_tap` event carrying which axis was struck and on which side:
+Unlike the tag and sensor examples above, this one needs a change on the box
+first. `lis3dh` gives `on_click` the raw `CLICK_SRC` byte and nothing more — the
+example config does not enable `click:` at all, and no firmware here fires a tap
+event on its own. Send one explicitly:
+
+```yaml
+lis3dh:
+  id: accelerometer
+  click:
+    threshold: 40         # tune per box, see below
+    on_click:
+      - homeassistant.event:
+          event: esphome.tonie_tap
+          # Bit 3 of CLICK_SRC is the sign bit: which side of the axis was
+          # struck. That is what separates "tap the left" from "tap the right".
+          variables:
+            side: !lambda 'return std::string((src & 0x08) ? "neg" : "pos");'
+          data_template:
+            side: "{{ side }}"
+```
+
+Home Assistant's ESPHome integration adds `device_id` to every `esphome.*`
+event, so the same resolve-the-box trick works here:
 
 ```yaml
 alias: Tonie — tap to skip
@@ -150,9 +171,13 @@ actions:
           entity_id: "{{ box }}_2"
 ```
 
-Tap detection needs tuning per box before this is usable — see the `Tap
-Threshold` control the config exposes, and tune it while watching the ESPHome
-log rather than by reflashing.
+Two things to settle before this is usable:
+
+- **The threshold is per box.** Set it with `threshold:` under `click:` and
+  watch the ESPHome log, which prints every `CLICK_SRC` it sees at DEBUG.
+- **One physical tap usually trips two or three axes**, ~100–230 ms apart, so
+  this automation will skip two or three tracks unless you debounce it. Add
+  `mode: single` with a short `delay` at the end, or gate on one axis.
 
 ---
 

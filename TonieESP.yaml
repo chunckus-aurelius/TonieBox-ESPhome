@@ -555,8 +555,9 @@ sensor:
       - multiply: 4.03  # R57/R58 (100k+33k)/33k -- 3-cell NiMH, 3.6V nominal
 
   # Rough state-of-charge, NOT a gauge -- voltage is a poor SoC proxy for NiMH
-  # and sags under audio load. Curve anchors and accuracy limits are in
-  # docs/hardware-notes.md "Battery percentage".
+  # and sags under audio load. The curve below is anchored on the stock
+  # firmware's own NVS thresholds (3.60V critical, 3.67/3.70V low) with the
+  # ends fitted to a 3-cell pack; treat anything between them as indicative.
   - platform: template
     id: battery_level
     name: "Battery"

@@ -158,8 +158,8 @@ void LIS3DHComponent::update() {
   // wrong, and it sent the 2026-08-01/02 debugging down a dead end. The real
   // faults were elsewhere entirely (async `- delay:` in on_boot leaving the
   // DAC3100 in reset during bus init, then an output: platform's setup()
-  // cutting the GPIO45 power rail right after the scan -- see the comments
-  // in tonie-the-assistant.yaml).
+  // cutting the GPIO45 power rail right after the scan -- see the on_boot and
+  // output: comments in TonieESP.yaml).
   //
   // Log 15 (2026-08-03) settled the read-shape question directly, with a
   // probe reading three sub-addresses at equal length each cycle:
@@ -196,9 +196,10 @@ void LIS3DHComponent::update() {
 }
 
 // Click polling lives here rather than in update() because the two want very
-// different rates: the configs set update_interval: 1s to keep accelerometer
-// publishes down, and a tap answered up to a second later feels broken. The
-// latch means nothing is lost at any rate -- this is purely about latency.
+// different rates: update_interval is set for accelerometer publishes (250ms in
+// TonieESP.yaml, and configs that do not drive an LED from it go slower still),
+// while a tap answered that late feels broken. The latch means nothing is lost
+// at any rate -- this is purely about latency.
 void LIS3DHComponent::loop() {
   if (!this->initialized_ || !this->click_enabled_)
     return;

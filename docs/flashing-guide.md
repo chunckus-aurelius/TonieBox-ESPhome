@@ -15,7 +15,8 @@ opening the shell, soldering a UART bridge, and flashing over ESPHome Web.
 ## Tools and parts
 
 - Phillips screwdriver
-- Soldering iron, flux paste, and 4 Dupont wires
+- Soldering iron, flux paste, and 4 Dupont wires — three for the UART bridge,
+  one to bridge J100
 - USB-to-serial adapter, 3.3 V logic — FTDI FT232R or CH340
 - Chrome or Edge — ESPHome Web runs on Web Serial
 
@@ -123,6 +124,10 @@ Choose **Empty Configuration** and paste in [`TonieESP.yaml`](../TonieESP.yaml).
 
 ![Empty Configuration](images/22-create-config.png)
 *Choose Empty Configuration*
+
+The config reads four values with `!secret`, so define them in `secrets.yaml`
+before compiling or the build fails on the first one: `wifi_ssid`,
+`wifi_password`, `api_key` and `ota_password`. See [the README](../README.md#usage).
 
 When prompted to match a board, pick **ESP32-S3 DevKitC-1**.
 

@@ -13,16 +13,19 @@ static const char *const TAG = "trf7962a";
 
 // Timeouts for the transmit/receive state machines, in microseconds.
 //
-// THESE ARE DELIBERATELY SHORTER THAN THE REFERENCE DRIVER'S 50ms. That
-// driver polls from its own FreeRTOS task, where a 50ms block costs nothing.
-// update() here runs on the ESPHome main loop, which also feeds the audio
-// pipeline -- blocking it for 50ms several times a second causes dropouts
-// and trips the component watchdog. An ISO15693 inventory round trip is
-// well under 10ms, so these are generous for the protocol while staying
-// cheap enough for the loop. Raise them only if real tags time out.
-// Both are 50ms in the reference driver (trf7962a.c: `uint32_t timeout =
-// 50000` and the Tx wait's `> 50000`). At 10ms an ISO15693 exchange can be
-// abandoned before the tag has finished answering.
+// 50ms, matching the reference driver exactly (trf7962a.c: `uint32_t timeout =
+// 50000` and the Tx wait's `> 50000`). An earlier version cut both to 10ms on
+// the reasoning that the reference polls from its own FreeRTOS task, where a
+// 50ms block costs nothing, whereas update() here runs on the ESPHome main
+// loop that also feeds the audio pipeline. The reasoning is sound; the number
+// was not. At 10ms an ISO15693 exchange can be abandoned before the tag has
+// finished answering, so DO NOT lower these again.
+//
+// They cost far less than they look like they do: neither is a fixed wait.
+// Both are ceilings on a poll loop that exits the moment the chip answers,
+// and a tag that is present answers in well under a millisecond. Only a
+// genuinely silent field pays the full 50ms, and read_packet_ leaves that
+// case early anyway on IRQ_NO_RESPONSE.
 static const uint32_t TX_TIMEOUT_US = 50000;
 static const uint32_t RX_TIMEOUT_US = 50000;
 // Once the first response bytes arrive the tag is talking, so the gap timeout
@@ -212,7 +215,7 @@ void TRF7962AComponent::read_fifo_(uint8_t *data, uint8_t length) {
   // identical and memmove-ing two off the front if so. Two different fixes
   // for the same silicon bug -- DO NOT APPLY BOTH. The address dodge here is
   // deterministic, so the triple-byte heuristic is deliberately absent.
-  uint8_t tmp[TRF7962A_FIFO_SIZE + 8];
+  uint8_t tmp[TRF7962A_RX_BUFFER_SIZE];
   if (length + 1u > sizeof(tmp)) {
     ESP_LOGW(TAG, "FIFO read of %u bytes too large", length);
     return;
@@ -297,10 +300,10 @@ void TRF7962AComponent::setup() {
 
   if (this->irq_pin_ != nullptr) {
     this->irq_pin_->setup();
-    // Latch every IRQ pulse in an ISR so read_packet_'s poll loop can tell
-    // "an edge happened since I last checked" from "nothing happened" --
-    // see Trf7962aIrqStore. Without this, an edge landing between two
-    // register polls is simply lost.
+    // Counts IRQ edges in an ISR. NOTHING IN THE DRIVER READS THAT COUNT --
+    // read_packet_ ends frames on a quiet gap, not on an IRQ bit, so no
+    // decision hangs on having seen an edge. Kept only as groundwork for a
+    // future interrupt-driven Rx; see Trf7962aIrqStore in the header.
     this->irq_store_.setup(this->irq_pin_);
   }
 
@@ -691,7 +694,7 @@ bool TRF7962AComponent::get_random_(uint8_t *rand) {
   // fails. Note the flags byte is 0x02, NOT the 0x26 used for inventory.
   const uint8_t request[] = {0x02, ISO_GET_RANDOM_NUMBER, 0x04};
 
-  uint8_t response[TRF7962A_FIFO_SIZE + 8];
+  uint8_t response[TRF7962A_RX_BUFFER_SIZE];
   uint8_t response_length = 0;
 
   // 5 on the wire: flags + 2 random + 2 CRC.
@@ -756,7 +759,7 @@ bool TRF7962AComponent::set_password_(uint32_t password) {
   request[3] = 0x04;               // password identifier (privacy)
   memcpy(&request[4], pw, 4);
 
-  uint8_t response[TRF7962A_FIFO_SIZE + 8];
+  uint8_t response[TRF7962A_RX_BUFFER_SIZE];
   uint8_t response_length = 0;
   // 3 on the wire: flags + 2 CRC.
   if (!this->transceive_(request, sizeof(request), response, &response_length, 3)) {
@@ -778,7 +781,7 @@ bool TRF7962AComponent::inventory_(std::vector<uint8_t> &uid) {
   // Followed by the INVENTORY opcode and a zero-length mask.
   const uint8_t request[] = {0x26, ISO_INVENTORY, 0x00};
 
-  uint8_t response[TRF7962A_FIFO_SIZE + 8];
+  uint8_t response[TRF7962A_RX_BUFFER_SIZE];
   uint8_t response_length = 0;
 
   // 12 on the wire: flags + DSFID + 8 UID + 2 CRC.

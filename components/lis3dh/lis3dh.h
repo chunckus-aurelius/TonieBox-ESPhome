@@ -101,7 +101,7 @@ static const uint8_t LIS3DH_CTRL_REG1_AXES_ENABLE = 0x07;
 // 100Hz in the ODR nibble (CTRL_REG1 bits 7:4) -- comfortably above the
 // component's default 100ms poll so each update() sees fresh data.
 static const uint8_t LIS3DH_ODR_100HZ = 0x50;
-// 400Hz whenever click detection is on. A tap is a a few-millisecond transient;
+// 400Hz whenever click detection is on. A tap is a few-millisecond transient;
 // at 100Hz (one sample per 10ms) it can fall entirely between samples, which is
 // the rate every working LIS3DH tap implementation avoids. Adafruit's library
 // -- the reference for the click path, since teddybox has none -- runs 400Hz.

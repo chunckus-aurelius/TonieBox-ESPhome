@@ -66,7 +66,7 @@ def _accel_sensor_schema():
 # the rate to 400Hz, so one count is 2.5ms and these defaults mean roughly
 # 25ms limit / 50ms latency / 250ms window. They are the reference
 # implementation's own values, not guesses, but the threshold still has to be
-# found per box -- see "Tap to skip" in docs/hardware-notes.md.
+# found per box: how hard a tap reads depends on the shell and where it lands.
 CLICK_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_DOUBLE, default=False): cv.boolean,

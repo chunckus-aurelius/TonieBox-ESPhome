@@ -22,7 +22,7 @@ Home Assistant and lets you decide what that means.
 | `dac3100`  | I2C | TI TLV320DAC3100 I2S audio codec — clocking, output routing, volume, mute |
 | `lis3dh`   | I2C | ST LIS3DH 3-axis accelerometer — X/Y/Z as sensors, plus optional hardware tap detection via `click:` |
 
-Each reads its configuration back at the end of `setup()` and prints it in
+Each reads its own configuration back off the chip and prints it in
 `dump_config()`, so a codec that ACKs on I2C but is silent, or an init table
 that failed to apply, is visible in the boot log rather than presenting as a
 mystery.
@@ -50,6 +50,15 @@ external_components:
 
 Then take [`TonieESP.yaml`](TonieESP.yaml) as your starting point. It is a
 complete working config, not a skeleton.
+
+You will need a `secrets.yaml` alongside it defining:
+
+```yaml
+wifi_ssid: "..."
+wifi_password: "..."
+api_key: "..."       # base64 API encryption key
+ota_password: "..."
+```
 
 Getting it onto the hardware — opening the shell, soldering the UART bridge,
 and flashing over ESPHome Web — is covered step by step in the
@@ -93,15 +102,6 @@ knowing before wiring it to anything:
 `dump_config` reads the click registers back off the chip, so a misapplied
 setting is visible in the boot log rather than as silence.
 
-You will need a `secrets.yaml` alongside it defining:
-
-```yaml
-wifi_ssid: "..."
-wifi_password: "..."
-api_key: "..."       # base64 API encryption key
-ota_password: "..."
-```
-
 ## Stock Toniebox vs this firmware
 
 Stock behaviour is taken from the official tonies manual. Status is what runs
@@ -114,7 +114,7 @@ on hardware today, not what is planned.
 | Stock function | Stock behaviour | Here | Notes |
 |---|---|---|---|
 | Play a Tonie | Place figure on top, audio starts | ✅ | Tag UID goes to Home Assistant as `tag_scanned`; HA/Music Assistant decides what plays |
-| Pause on removal | Lift the figure, playback pauses | 🟡 | The box reports removal; pausing is a Home Assistant automation — see the [automations guide](docs/automations.md). Removal is debounced 3 s in `trf7962a`, so a knocked figure does not trigger it |
+| Pause on removal | Lift the figure, playback pauses | 🟡 | The box reports removal; pausing is a Home Assistant automation — see the [automations guide](docs/automations.md). Removal is debounced 1.5 s in `trf7962a`, so a knocked figure does not trigger it |
 | Resume position | Replacing the same figure resumes where it stopped, unless another was played in between | ⬜ | Stock keys this on last-played tag, not a timer |
 | Skip chapter | Tap either side of the box | 🟡 | `lis3dh` supports it — set `click:` and bind `on_click`. Proven on hardware, but **not enabled in the example config**, since the threshold needs tuning per box. GPIO14/INT1 is not used: CLICK_SRC is polled instead |
 | Fast-forward / rewind | Tilt the box to one side | ⬜ | Separate gesture from the tap; direction is user-configurable in stock |
