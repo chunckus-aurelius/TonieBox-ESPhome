@@ -298,13 +298,11 @@ void TRF7962AComponent::setup() {
   // Second delegate on the same bus, mode 1, for the read phase.
   this->read_client_.setup_read_client(this->parent_);
 
+  // Configured so the line is driven to a defined state, then left alone.
+  // Nothing samples it: read_packet_ ends frames on a quiet gap rather than on
+  // an IRQ edge. See the note above TRF7962AComponent in the header.
   if (this->irq_pin_ != nullptr) {
     this->irq_pin_->setup();
-    // Counts IRQ edges in an ISR. NOTHING IN THE DRIVER READS THAT COUNT --
-    // read_packet_ ends frames on a quiet gap, not on an IRQ bit, so no
-    // decision hangs on having seen an edge. Kept only as groundwork for a
-    // future interrupt-driven Rx; see Trf7962aIrqStore in the header.
-    this->irq_store_.setup(this->irq_pin_);
   }
 
   this->chip_ok_ = this->reset_chip_();

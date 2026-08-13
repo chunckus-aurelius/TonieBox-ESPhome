@@ -29,9 +29,12 @@ CONFIG_SCHEMA = (
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(TRF7962AComponent),
-            # internal_gpio_input_pin_schema, not gpio_input_pin_schema: the
-            # driver attaches a real ISR to this pin (Trf7962aIrqStore), which
-            # only a native MCU pin supports -- an I2C expander pin has none.
+            # The driver configures this pin and never samples it -- reception
+            # ends on a quiet gap, not an IRQ edge. Kept in the schema because
+            # dropping a key breaks every existing config, and kept as
+            # internal_gpio_input_pin_schema (not gpio_input_pin_schema)
+            # because an interrupt-driven Rx would need a native MCU pin to
+            # attach to, and widening later is easier than narrowing.
             cv.Optional(CONF_IRQ_PIN): cv.All(
                 cv.only_on_esp32, pins.internal_gpio_input_pin_schema
             ),

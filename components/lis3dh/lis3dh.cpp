@@ -6,6 +6,13 @@ namespace lis3dh {
 
 static const char *const TAG = "lis3dh";
 
+// The click registers worth seeing at boot, and their names for the log. Read
+// in setup() by read_back_click_registers_(), printed by dump_config().
+static const uint8_t CLICK_READBACK_REGS[LIS3DH_CLICK_READBACK_COUNT] = {
+    REG_CTRL_REG1, REG_CTRL_REG2, REG_CTRL_REG3, REG_CTRL_REG5, REG_CLICK_CFG, REG_CLICK_THS, REG_TIME_LIMIT};
+static const char *const CLICK_READBACK_NAMES[LIS3DH_CLICK_READBACK_COUNT] = {
+    "CTRL_REG1", "CTRL_REG2", "CTRL_REG3", "CTRL_REG5", "CLICK_CFG", "CLICK_THS", "TIME_LIMIT"};
+
 void LIS3DHComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up LIS3DH...");
 
@@ -37,6 +44,18 @@ void LIS3DHComponent::setup() {
 
   this->initialized_ = true;
   this->write_click_config_();
+  this->read_back_click_registers_();
+}
+
+// Read the registers back rather than reprinting what we meant to write. A
+// silently rejected write and a correct one look identical otherwise, and this
+// project has burned flash cycles on exactly that ambiguity.
+void LIS3DHComponent::read_back_click_registers_() {
+  if (!this->click_enabled_)
+    return;
+  for (uint8_t i = 0; i < LIS3DH_CLICK_READBACK_COUNT; i++) {
+    this->click_readback_ok_[i] = this->read_byte(CLICK_READBACK_REGS[i], &this->click_readback_[i]);
+  }
 }
 
 // INT1 (GPIO14) is deliberately NOT used. CLICK_SRC is read on a 50ms timer in
@@ -221,19 +240,14 @@ void LIS3DHComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  Click: %s, threshold %u, limit %u, latency %u, window %u, hpf %s",
                   this->click_double_ ? "double" : "single", this->click_threshold_, this->click_time_limit_,
                   this->click_time_latency_, this->click_time_window_, this->click_hpf_ ? "on" : "off");
-    // Read the registers back rather than reprinting what we meant to write.
-    // A silently rejected write and a correct one look identical otherwise,
-    // and this project has burned flash cycles on exactly that ambiguity.
-    const uint8_t regs[] = {REG_CTRL_REG1, REG_CTRL_REG2,  REG_CTRL_REG3, REG_CTRL_REG5,
-                            REG_CLICK_CFG, REG_CLICK_THS, REG_TIME_LIMIT};
-    const char *names[] = {"CTRL_REG1", "CTRL_REG2", "CTRL_REG3", "CTRL_REG5",
-                           "CLICK_CFG", "CLICK_THS", "TIME_LIMIT"};
-    for (size_t i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
-      uint8_t v = 0;
-      if (this->read_byte(regs[i], &v)) {
-        ESP_LOGCONFIG(TAG, "    %s (0x%02X) = 0x%02X", names[i], regs[i], v);
+    // Values cached by read_back_click_registers_() at the end of setup().
+    // Not read here: dump_config() must not touch hardware.
+    for (uint8_t i = 0; i < LIS3DH_CLICK_READBACK_COUNT; i++) {
+      if (this->click_readback_ok_[i]) {
+        ESP_LOGCONFIG(TAG, "    %s (0x%02X) = 0x%02X", CLICK_READBACK_NAMES[i], CLICK_READBACK_REGS[i],
+                      this->click_readback_[i]);
       } else {
-        ESP_LOGCONFIG(TAG, "    %s (0x%02X) = READ FAILED", names[i], regs[i]);
+        ESP_LOGCONFIG(TAG, "    %s (0x%02X) = READ FAILED", CLICK_READBACK_NAMES[i], CLICK_READBACK_REGS[i]);
       }
     }
   }

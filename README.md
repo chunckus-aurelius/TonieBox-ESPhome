@@ -22,10 +22,10 @@ Home Assistant and lets you decide what that means.
 | `dac3100`  | I2C | TI TLV320DAC3100 I2S audio codec — clocking, output routing, volume, mute |
 | `lis3dh`   | I2C | ST LIS3DH 3-axis accelerometer — X/Y/Z as sensors, plus optional hardware tap detection via `click:` |
 
-Each reads its own configuration back off the chip and prints it in
-`dump_config()`, so a codec that ACKs on I2C but is silent, or an init table
-that failed to apply, is visible in the boot log rather than presenting as a
-mystery.
+Each reads its own configuration back off the chip at the end of `setup()` and
+prints it in `dump_config()`, so a codec that ACKs on I2C but is silent, or an
+init table that failed to apply, is visible in the boot log rather than
+presenting as a mystery.
 
 ## Requirements
 
@@ -99,8 +99,8 @@ knowing before wiring it to anything:
   Debounce in your automation or in `on_click`, or a tap-to-skip will skip
   twice.
 
-`dump_config` reads the click registers back off the chip, so a misapplied
-setting is visible in the boot log rather than as silence.
+The click registers are read back off the chip after they are written, so a
+misapplied setting shows up in the boot log rather than as silence.
 
 ## Stock Toniebox vs this firmware
 

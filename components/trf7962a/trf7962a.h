@@ -210,42 +210,22 @@ class TRF7962AReadClient final : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST,
   }
 };
 
-// ISR-safe edge counter for the IRQ pin (no vtables, no ESPHome core calls --
-// see esphome/components/gpio/binary_sensor for the pattern this follows).
+// THERE IS NO IRQ EDGE COUNTER HERE ANY MORE, AND RE-ADDING ONE IS A STEP
+// BACKWARDS. An ISR-safe counter used to live at this spot, built to patch a
+// symptom of the old read_packet_: that version drained the FIFO once and
+// exited on a clean RX_COMPLETE, so a poll could miss an edge entirely --
+// FIFO_HIGH_OR_LOW pulses, then RX_COMPLETE, and the poll only ever sees the
+// latter -- and the counter let that exit be second-guessed.
 //
-// >>> NOTHING READS THIS ANY MORE. It is wired up but not consulted. <<<
+// read_packet_ no longer exits on any IRQ bit at all: it drains repeatedly and
+// ends the frame on a quiet gap, exactly as teddybox does. No decision hangs
+// on having seen an edge, so nothing ever read the count. If an
+// interrupt-driven Rx is ever written, take the edge from the pin directly --
+// do NOT reintroduce a counter into the drain loop, which is what the gap
+// timeout replaced.
 //
-// It was built to patch a symptom of the old read_packet_, which drained the
-// FIFO once and then exited on a clean RX_COMPLETE. A poll can miss an edge
-// entirely -- FIFO_HIGH_OR_LOW pulses, then RX_COMPLETE, and the poll only
-// ever sees the latter -- so the counter let that exit be second-guessed.
-//
-// read_packet_ no longer exits on any IRQ bit at all: it drains repeatedly
-// and ends the frame on a quiet gap, exactly as teddybox does. A missed edge
-// therefore costs nothing, because no decision hangs on having seen it. The
-// counter is kept only because GPIO13 genuinely pulses and a future
-// interrupt-driven Rx would want it. If that never happens, delete this class
-// and the setup() call -- do NOT reintroduce it into the drain loop.
-class Trf7962aIrqStore final {
- public:
-  // attach_interrupt()/to_isr() are only declared on InternalGPIOPin (a
-  // native MCU pin), not the base GPIOPin -- an I2C expander pin (PCF8574,
-  // MCP23017, etc.) has no ISR to attach to. Not an issue on this board:
-  // GPIO13 is a native ESP32-S3 pin. See esphome/components/gpio's
-  // binary_sensor for how a component that must also support expander pins
-  // handles the fallback; this driver doesn't need that generality.
-  void setup(InternalGPIOPin *pin) {
-    this->isr_pin_ = pin->to_isr();
-    pin->attach_interrupt(&Trf7962aIrqStore::isr_, this, gpio::INTERRUPT_RISING_EDGE);
-  }
-  uint32_t count() const { return this->edge_count_; }
-
- protected:
-  static void isr_(Trf7962aIrqStore *store) { store->edge_count_++; }
-
-  ISRInternalGPIOPin isr_pin_;
-  volatile uint32_t edge_count_{0};
-};
+// irq_pin_ below is still configured as an input and still logged, so the
+// `irq_pin` config key keeps working; nothing samples it.
 
 class TRF7962AComponent final : public PollingComponent,
                                 public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
@@ -325,9 +305,9 @@ class TRF7962AComponent final : public PollingComponent,
   // The configured CS line, moved out of SPIClient::cs_ in setup() so this
   // component owns it rather than the delegate.
   GPIOPin *cs_pin_{nullptr};
+  // Set up as an input and printed by dump_config(), but never sampled -- see
+  // the note above this class.
   InternalGPIOPin *irq_pin_{nullptr};
-  // Wired up in setup() but never consulted -- see Trf7962aIrqStore's comment.
-  Trf7962aIrqStore irq_store_;
   std::vector<TRF7962AListener *> listeners_;
   std::vector<uint8_t> current_uid_;
   bool tag_present_{false};

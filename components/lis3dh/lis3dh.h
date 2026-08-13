@@ -87,6 +87,11 @@ static const uint8_t LIS3DH_CTRL_REG5_LIR_INT1 = 0x08;
 // How often loop() reads CLICK_SRC. Independent of update_interval on purpose.
 static const uint32_t LIS3DH_CLICK_POLL_MS = 50;
 
+// Click registers read back at the end of setup() and printed by dump_config().
+// Cached rather than read live, because dump_config() must not touch hardware
+// -- the same rule the trf7962a and dac3100 components in this repo follow.
+static const uint8_t LIS3DH_CLICK_READBACK_COUNT = 7;
+
 // Reading more than one byte requires the auto-increment bit (0x80) OR'd
 // into the sub-address; without it the device returns the same register
 // repeatedly. teddybox spells this LIS3DH_OUT_X_L_INCR (0x28 | 0x80).
@@ -151,6 +156,9 @@ class LIS3DHComponent final : public PollingComponent, public i2c::I2CDevice {
   uint8_t range_g_() const;
   void write_click_config_();
   void poll_click_();
+  // Reads the click registers back off the chip and caches them for
+  // dump_config(). Called at the end of setup(); see the count constant above.
+  void read_back_click_registers_();
 
   Lis3dhRange range_{RANGE_2G};
   bool initialized_{false};
@@ -164,6 +172,12 @@ class LIS3DHComponent final : public PollingComponent, public i2c::I2CDevice {
   uint8_t click_time_window_{100};
   uint32_t last_click_poll_{0};
   CallbackManager<void(uint8_t)> click_callback_;
+
+  // Cached in setup() by read_back_click_registers_(), printed by
+  // dump_config(). A boot-time snapshot: the live setters above can rewrite
+  // these registers afterwards, which dump_config() has long since run past.
+  uint8_t click_readback_[LIS3DH_CLICK_READBACK_COUNT]{};
+  bool click_readback_ok_[LIS3DH_CLICK_READBACK_COUNT]{};
 
   sensor::Sensor *x_sensor_{nullptr};
   sensor::Sensor *y_sensor_{nullptr};
