@@ -87,8 +87,9 @@ one a figure was placed on.
 
 ### Tap detection
 
-`lis3dh` can use the LIS3DH's hardware click detector, which the example config
-leaves off because the threshold depends on the box and how hard you tap:
+`lis3dh` can use the LIS3DH's hardware click detector. The example config
+enables it, and exposes the threshold as a `Tap Threshold` number so you can
+tune it live rather than reflashing to find the right value:
 
 ```yaml
 lis3dh:
@@ -139,28 +140,28 @@ marked working because it ought to be.
 | Play a Tonie | Place figure on top, audio starts | ✅ | Tag UID goes to Home Assistant as `tag_scanned`; HA/Music Assistant decides what plays |
 | Pause on removal | Lift the figure, playback pauses | 🟡 | The box reports removal; pausing is a Home Assistant automation — see the [automations guide](docs/automations.md). Removal is debounced 1.5 s in `trf7962a`, so a knocked figure does not trigger it |
 | Resume position | Replacing the same figure resumes where it stopped, unless another was played in between | ⬜ | Stock keys this on last-played tag, not a timer |
-| Skip chapter / change track | Tap either side of the box | 🟡 | `lis3dh` supports it — set `click:` and bind `on_click`. Proven end to end on hardware, driving next/previous track against a Music Assistant queue, but **not enabled in the example config**, since the threshold needs tuning per box. Left reports `side: pos`, right `side: neg` — see the [automations guide](docs/automations.md). GPIO14/INT1 is not used: CLICK_SRC is polled instead |
-| Fast-forward / rewind | Tilt the box to one side | 🟡 | Proven on hardware, not in the example config. With the LIS3DH mounted as it is here the tilt signal is `Y + Z`, not either axis alone — the part sits rotated ~45°, so the two move together. Measured +0.84 tilted one way and −0.73 the other against ~0 upright, which leaves plenty of room for a ±0.40 threshold |
+| Skip chapter / change track | Tap either side of the box | ✅ | Working end to end against a Music Assistant queue. Taps are debounced 400 ms and gated on the box being upright, so a tap during a tilt does not trip both gestures. Left reports `side: pos`, right `side: neg`; the [automations guide](docs/automations.md) has the automation. `Tap Threshold` is a live number — tune it rather than reflashing. GPIO14/INT1 is not used: CLICK_SRC is polled instead |
+| Fast-forward / rewind | Tilt the box to one side | 🟡 | The box fires `esphome.tonie_tilt` with `side: pos`/`neg` while a tilt is held, repeating every 600 ms so Home Assistant can seek in steps. **No example automation consumes it yet** — that is the missing half. The tilt signal is `Y + Z`, not either axis alone: the part sits rotated ~45°, so the two move together. Measured +0.84 tilted one way, −0.73 the other, against ~0 upright |
 | Volume | Squeeze big ear up, small ear down | ✅ | Short press, 50–800 ms. A `Max Volume` number caps every path — ears, Home Assistant, Music Assistant. Defaults to 70% |
 
 ### Power
 
 | Stock function | Stock behaviour | Here | Notes |
 |---|---|---|---|
-| Turn on — ear | Press an ear | 🟡 | **Both ears proven on hardware** with an `ext1` mask, including the ears still reading correctly after a wake — but the example config here still ships `ext0`, which takes a single wake pin, so out of the box it is big ear only |
-| Turn on — charger | Place on the charging station | 🟡 | Same `ext1` work, also proven on hardware. Not in the example config. GPIO7 sits low while charging, so the mask must be built at sleep time — armed off the charger, excluded while docked — or the box can never sleep on the charger |
+| Turn on — ear | Press an ear | ✅ | Both ears, via an `ext1` mask built at sleep time. The wake pads are held through deep sleep to keep their pullups and released in `on_boot` — get that wrong and the buttons read stuck after every wake |
+| Turn on — charger | Place on the charging station | ✅ | Same `ext1` mask. GPIO7 sits low while charging, so it is armed off the charger and excluded while docked — an already-low pin in an `ANY_LOW` mask is an instant wake, so a docked box that included it could never sleep |
 | Idle power off | Automatic after 10 minutes | ✅ | Deep sleep with a configurable `Sleep Timeout` in minutes. **Defaults to 5 minutes**; set it to 0 to disable sleep entirely |
 | Manual power off | — | ✅ | Hold either ear 1–12 s, or the Power switch in Home Assistant |
-| Restart | Upside down + both ears ~10 s, off the charger | 🟡 | Proven on hardware, not in the example config. Upside down is a steady-state check on the vertical axis rather than a gesture, which makes it far more robust than tap detection. Three things worth copying if you build it: allow for the box being **held** — X reads 0.79 to 1.26 inverted in the hand, so a tight threshold resets the counter on hand shake; gate the ears' power-off hold on *not* being upside down, or an aborted attempt releases straight into a power toggle; and blink the LED before rebooting, because the reboot takes ~5 s and is otherwise completely silent |
+| Restart | Upside down + both ears ~10 s, off the charger | ✅ | Upside down is a steady-state check on the vertical axis, far more robust than tap detection. Three things in here cost time to find: the threshold allows for the box being **held** (X reads 0.79–1.26 inverted in the hand, so a tight one resets the counter on hand shake); the ears' power-off hold is gated on *not* being upside down, or an aborted attempt releases into a power toggle; and it blinks the LED first, because the reboot takes ~5 s and is otherwise completely silent. Charger state is not checked — with no factory reset to distinguish it from, it has nothing to select between |
 | Factory reset | Upside down + both ears ~10 s, on the charger | ⛔ | Not implemented on purpose — there is no cloud state to reset, and it shares a gesture with restart |
 
 ### Indicators
 
 | Stock function | Stock behaviour | Here | Notes |
 |---|---|---|---|
-| Ready | Steady green | ✅ | Green from boot until the box sleeps, so a wake is visible before any audio plays. Low battery and error colours still need a precedence model |
-| Low battery | Steady orange | 🟡 | A `Battery` % sensor exposes the estimate, but nothing drives the LED from it yet — that needs a colour precedence model. Thresholds from the stock NVS dump: 3.60 V critical, 3.67/3.70 V low with 30 mV hysteresis |
-| Charging | Reported via LED | 🟡 | The `Charge Sense` ADC reads the charger rail directly (~4.9 V present, 0 V absent), so charging is visible as a number. No binary sensor in the example config |
+| Ready | Steady green | ✅ | Green from boot until the box sleeps, so a wake is visible before any audio plays. A `Status LED` precedence model decides which state wins: Home Assistant first, then Bedtime, then charging, then low battery, then plain awake |
+| Low battery | Steady orange | 🟡 | Off the charger and under 20%, the LED paints orange instead of green. **Written and in the config, but not yet seen fire** — it needs a pack that low. A missing reading is treated as "unknown", never as "flat", so a box that has never been measured off its charger does not cry wolf on every boot. Stock NVS thresholds for reference: 3.60 V critical, 3.67/3.70 V low with 30 mV hysteresis |
+| Charging | Reported via LED | ✅ | The LED ramps red through green as the charge climbs, then breathes green when the pack is full. `Charge Sense` also reads the charger rail directly (~4.9 V present, 0 V absent), so charging is visible as a number as well as a colour |
 | Connecting / downloading | Pulsing and flashing blue | ⛔ | No Tonie cloud here; Wi-Fi state is visible in Home Assistant |
 | Error | Flashing red plus a spoken message | ⛔ | Errors surface in the ESPHome log |
 
@@ -168,8 +169,8 @@ marked working because it ought to be.
 
 | Feature | Here | Notes |
 |---|---|---|
-| Sleep timer with light | ⬜ | Reachable — RGB LED plus the media player |
-| Sunrise alarm | 🟡 | **No firmware needed** — the LED is an ordinary HA light, so the alarm is one automation, written up in the [automations guide](docs/automations.md). The box must be awake when it fires, so set `Sleep Timeout` to 0 and leave it on its charger. Waking a box that genuinely slept is the separate problem, and needs a timer wake source |
+| Sleep timer with light | 🟡 | A `Bedtime` switch and a `Bedtime Timer` number. Runs alongside whatever is already playing — as the stock timer does — holds the LED warm amber, fades it over the final minute, then stops and sleeps. **In the config, not yet confirmed on hardware.** Note the fade leaves the visible band about nine seconds in: below ~60% this LED is not visible through the shell |
+| Sunrise alarm | 🟡 | **No firmware needed** — the LED is an ordinary HA light, so the alarm is one automation, written up in the [automations guide](docs/automations.md). The box must be awake when it fires, so leave it on its charger with `Stay Awake on Charger` on, or set `Sleep Timeout` to 0. Waking a box that genuinely slept is the separate problem, and needs a timer wake source |
 | Bluetooth headphones | ⛔ | No Bluetooth audio path on this hardware |
 | USB-C charging | ⛔ | Hardware |
 | Tonieplay games | ⛔ | Proprietary content |
@@ -177,8 +178,7 @@ marked working because it ought to be.
 ### Beyond stock
 
 Things this firmware does that no Toniebox does. Same legend as above, and the
-same rule: status is what the example config in this repo gives you, with
-anything proven only on the author's boxes called out as such.
+same rule: status is what the example config in this repo gives you.
 
 | Feature | Here | Notes |
 |---|---|---|
@@ -190,10 +190,10 @@ anything proven only on the author's boxes called out as such.
 | Battery percentage | ✅ | Estimated from the pack curve, verified on hardware at 4.04 V and 3.96 V. Stock shows a three-level indicator |
 | Raw pack and charge-rail voltages | ✅ | Real numbers rather than a colour, so charging can be watched rather than guessed at |
 | Accelerometer readout | ✅ | All three axes as HA sensors, plus hardware tap detection on the LIS3DH |
-| Gestures as HA events | 🟡 | Proven on hardware — `esphome.tonie_tap` carries `axis` and `side` — but the `click:` block is not enabled in the example config, since the threshold needs tuning per box. See the [automations guide](docs/automations.md) |
+| Gestures as HA events | ✅ | `esphome.tonie_tap` carries `axis` and `side`; `esphome.tonie_tilt` carries `side` and repeats while held. Any automation can consume them — see the [automations guide](docs/automations.md) |
 | Configurable idle timeout | ✅ | `Sleep Timeout` in minutes, 0 to disable. Stock is a fixed 10 minutes with no way to change it |
 | Volume ceiling | ✅ | `Max Volume` clamps every path — ears, Home Assistant, Music Assistant. Stock has no cap |
-| The LED as an HA light | ✅ | A plain RGB light entity — any automation can paint it any colour. The example config does no device-side painting at all, so nothing competes for it |
+| The LED as an HA light | ✅ | An RGB light entity, and a `Status LED` switch that hands it to Home Assistant entirely — with that off, nothing on the device repaints over an automation's colour. That is what makes the sunrise alarm possible without firmware |
 | Test tone | ✅ | A button that proves I2S → DAC → amp → speaker with no network involved. Worth keeping during bring-up |
 | Headphone detect | 🟡 | Exposed as a binary sensor on GPIO48. Nothing acts on it and the polarity has not been verified |
 | Timer wake from deep sleep | ⬜ | A sleeping box can only be woken by a wake pin. Waking on a schedule would need `esp_sleep_enable_timer_wakeup` alongside the wake mask |

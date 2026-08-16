@@ -1,36 +1,53 @@
-# TonieESP -- example ESPHome config for ESP32-S3 Toniebox hardware (rev v1.6.C).
+# Reference ESPHome config for a Toniebox ESP32-S3 board (rev v1.6.C).
 #
-# This is a working reference config, not a starting skeleton: the pin map,
-# boot order and audio buffer sizes are all specific to this board and most of
-# them are load-bearing. Comments marked with a warning explain why something
-# that looks arbitrary is not. Read those before changing the value next to it.
+# This is a complete working config, not a skeleton -- it is the same config
+# that runs on the author's boxes, with the box name genericised. Pin
+# assignments come from the toniebox-reverse-engineering project's `teddybox`
+# board_def.h for this revision.
 #
-# Pin assignments come from the teddybox project's board_def.h for this
-# revision. Custom components live in ./components -- see README.md.
+# The comments are load-bearing. Most of them exist because something failed in
+# a way that took a long time to explain, and the README's "Things that will
+# bite you" section collects the worst of them. Read that before changing
+# buffer sizes, boot order or audio formats.
+#
+# Two things this config deliberately does NOT do:
+#   - decide what a tag plays. The box reports the UID and Home Assistant
+#     decides. See docs/automations.md for worked examples.
+#   - talk to any cloud. There is no Boxine client here and nothing phones home.
+#
+# The console is pinned to UART0 so the GND/TX/RX solder pads carry log output
+# even with no USB port on the board -- see docs/flashing-guide.md. The
+# sleep_armed interlock is what stops a bad deep-sleep config locking you out
+# of OTA and forcing you back to those pads. Do not weaken it.
 
 esphome:
-  name: tonieesp
-  friendly_name: TonieESP
+  name: tonie-the-example
+  friendly_name: Tonie The Example
   # Powers the peripheral rails before the I2C bus comes up (BUS = 1000).
-  # Both the priority and the single-lambda structure matter.
+  # Priority and the single-lambda structure both matter -- see the lambda
+  # comment below, and the README's "Things that will bite you".
   on_boot:
     - priority: 1100
       then:
-        # ONE LAMBDA ON PURPOSE. Do not split this into separate actions with
-        # `- delay:` between them: DelayAction is asynchronous and returns
-        # immediately, so the I2C bus would be created part-way through the
-        # power-up sequence and every device on it would fail to probe.
+        # ONE LAMBDA ON PURPOSE. Do not split into actions with `- delay:`
+        # between them: DelayAction is async and returns immediately, so the
+        # I2C bus would come up mid-sequence. This cost two days once.
         - lambda: |-
             // Release the pin holds left behind by deep sleep, or the pads
             // stay latched and the rails never come back.
             gpio_deep_sleep_hold_dis();
             gpio_hold_dis(GPIO_NUM_45);
             gpio_hold_dis(GPIO_NUM_47);
+            // The ext1 wake pins are held too, to keep their pullups through
+            // sleep. Left latched, the ear buttons read stuck after a wake.
+            gpio_hold_dis(GPIO_NUM_7);
+            gpio_hold_dis(GPIO_NUM_20);
+            gpio_hold_dis(GPIO_NUM_21);
 
             // --- audio_board_power(true) ---
             gpio_reset_pin(GPIO_NUM_45);
             gpio_set_direction(GPIO_NUM_45, GPIO_MODE_OUTPUT);
-            gpio_set_level(GPIO_NUM_45, 1);   // POWER_GPIO    -> HIGH
+            gpio_set_level(GPIO_NUM_45, 1);   // POWER_GPIO   -> HIGH
             gpio_reset_pin(GPIO_NUM_47);
             gpio_set_direction(GPIO_NUM_47, GPIO_MODE_OUTPUT);
             gpio_set_level(GPIO_NUM_47, 0);   // SD_POWER_GPIO -> LOW (active low)
@@ -39,24 +56,25 @@ esphome:
             gpio_reset_pin(GPIO_NUM_26);
             gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);
             gpio_set_level(GPIO_NUM_26, 0);   // into reset
-            delay(10);                        // BLOCKING on purpose
+            delay(10);                        // BLOCKING, matches vTaskDelay(10)
             gpio_set_level(GPIO_NUM_26, 1);   // release
             delay(10);
 
             // Rail/codec settle before BUS(1000) creates the I2C bus.
             delay(250);
     # NOT the interlock -- that is the sleep_armed guard in box_power_down.
-    # begin_sleep(manual=true) skips the prevent_ check entirely, so this only
-    # blocks the non-manual re-entry from loop() after a KEEP_AWAKE deferral.
+    # begin_sleep(manual=true) skips the prevent_ check entirely, so this
+    # only blocks the non-manual re-entry from loop(). Keep it for that.
     - priority: -100
       then:
         - deep_sleep.prevent: box_deep_sleep
         # Earliest point the light component is up. Lighting here rather than
-        # waiting on the API means the box shows awake during the boot silence.
-        - script.execute: led_awake
+        # waiting on the API means the box shows awake during the boot silence,
+        # which is the window that was getting the volume cranked.
+        - script.execute: led_update
 
 esp32:
-  board: esp32-s3-devkitc-1  # placeholder -- confirm the exact module for your board
+  board: esp32-s3-devkitc-1  # placeholder -- confirm exact module for this board rev
   framework:
     type: esp-idf
     # The S3 console defaults to USB_SERIAL_JTAG, which is unreachable on this
@@ -64,27 +82,23 @@ esp32:
     # port and only ROM output ever reaches the solder pads. `logger:
     # hardware_uart: UART0` alone is NOT enough: it moves ESPHome's app logger
     # but not the IDF console, so the bootloader output still goes to USB and
-    # the wire cuts off at `entry 0x...`. That looks exactly like a board
-    # hanging in the bootloader when it is in fact booting fine. These force
-    # the IDF console itself onto UART0 and drop the unreachable USB secondary.
+    # the wire cuts off at `entry 0x...`. These force the IDF console itself
+    # onto UART0 and drop the unreachable USB secondary. Kept on every board:
+    # the GND/TX/RX pads are always there even when the wires are not.
     sdkconfig_options:
       CONFIG_ESP_CONSOLE_UART_DEFAULT: y
       CONFIG_ESP_CONSOLE_SECONDARY_NONE: y
 
-# No psram: block -- PSRAM is absent on this hardware. Every buffer below has
-# to fit in internal SRAM, which is why the audio sizes are conservative.
+# No psram: block -- PSRAM is confirmed absent. All buffers must fit in
+# internal SRAM, which is why the audio sizes below are conservative.
 
+# Cached for a day by default; add `refresh: 0s` to re-pull every build.
 external_components:
-  # Consume the components straight from this repository.
   - source:
       type: git
       url: https://github.com/chunckus-aurelius/TonieBox-ESPhome
       ref: main
     components: [trf7962a, dac3100, lis3dh]
-  # If you have cloned the repo instead, swap the block above for:
-  #   - source:
-  #       type: local
-  #       path: components
 
 logger:
   level: DEBUG
@@ -92,14 +106,16 @@ logger:
   # ESPHome's own log too and not just ROM output.
   hardware_uart: UART0
   logs:
-    # Sensor states log at ESP_LOGV per sensor per poll -- ~30 lines/sec here.
+    # Sensor states are ESP_LOGV per sensor per poll -- 30 lines/sec here.
     sensor: INFO
     text_sensor: INFO
 
 api:
   encryption:
     key: !secret api_key
-  # The real sleep interlock. Nothing else in this file may set sleep_armed.
+  # The real sleep interlock: deep sleep is unreachable until Home Assistant
+  # has connected once, so every boot has an OTA window no matter what got
+  # persisted. Nothing else in this file may set sleep_armed.
   on_client_connected:
     - lambda: 'id(sleep_armed) = true;'
 
@@ -135,15 +151,14 @@ trf7962a:
   cs_pin: GPIO1           # SPI_SS_GPIO
   irq_pin: GPIO13         # TRF7962A_IRQ_GPIO
   update_interval: 500ms
-  # Reporting the tag to Home Assistant is the only thing the device does with
-  # it. Keep the tag automations themselves in HA.
+  # Reporting to Home Assistant is the ONLY thing a tag does on device.
+  # Tag automations live in HA.
   on_tag_present:
     then:
-      # The size guard is a condition rather than an early `return` so that a
-      # short read cannot fire tag_scanned with a stale or empty UID and set
-      # off the wrong HA automation. `x` is a std::vector<uint8_t>, and
-      # tag_scanned wants a std::string, so it reads the formatted UID back
-      # off the text sensor published immediately above it.
+      # Guard is a condition, not an early `return`, so a short read cannot
+      # fire tag_scanned with a stale or empty tag_id and trip the wrong HA
+      # automation. `x` is std::vector<uint8_t>, so tag_scanned (which wants a
+      # std::string) reads the UID back off the sensor set immediately above.
       - if:
           condition:
             lambda: 'return x.size() >= 8;'
@@ -156,6 +171,8 @@ trf7962a:
                 id(nfc_tag_uid).publish_state(buf);
             - homeassistant.tag_scanned: !lambda 'return id(nfc_tag_uid).state;'
             - script.execute: idle_timer
+  # No tag tones on purpose: a tone here fights whatever Home Assistant is
+  # about to start playing, and the timing is never right.
   on_tag_removed:
     then:
       - lambda: 'id(nfc_tag_uid).publish_state("none");'
@@ -168,17 +185,29 @@ text_sensor:
     icon: "mdi:nfc-variant"
     update_interval: never  # pushed from the triggers above
 
+# Proves I2S -> DAC -> amp -> speaker with no network, no Home Assistant and no
+# decoder involved. The first thing to try after a fresh flash, and the fastest
+# way to tell a wiring fault from a Music Assistant one.
+rtttl:
+  id: toniebox_rtttl
+  speaker: toniebox_i2s_speaker
+
+button:
+  - platform: template
+    name: "Play Test Tone"
+    id: play_test_tone
+    on_press:
+      - rtttl.play: "two_short:d=4,o=5,b=100:16e6,16e6"
+
 dac3100:
   id: audio_codec
   i2c_id: toniebox_i2c
   address: 0x18
 
 # Topology: i2s speaker <- mixer <- per-source resampler <- media_player.
-#
-# These sizes are memory-constrained, not arbitrary. With no PSRAM the whole
-# pipeline plus the MP3 decoder has to fit in internal SRAM, and 44.1 kHz
-# playback only just does. If you raise any buffer here, expect allocation
-# failures at runtime rather than at compile time.
+# Sizes are memory-constrained, not arbitrary. There is no PSRAM on this
+# hardware, so every buffer is internal SRAM and 44.1kHz only just fits --
+# raising any of them tends to fail at runtime, not at compile time.
 speaker:
   - platform: i2s_audio
     id: toniebox_i2s_speaker
@@ -207,14 +236,17 @@ speaker:
     output_speaker: toniebox_announcement_mixer_input
     buffer_duration: 60ms
 
-# Advertised to Home Assistant; a streaming source such as Music Assistant
-# encodes to match. `format:` also decides which decoder gets compiled in.
-# These rates MUST equal the i2s speaker's sample_rate above.
+# Advertised to Home Assistant; Music Assistant encodes its stream to match.
+# `format:` also decides which decoder gets compiled in. These rates MUST
+# equal the i2s speaker's. Music Assistant reads this advertisement from
+# stored config-entry diagnostics at player setup, NOT live -- after flashing a
+# build that changes the format, restart Music Assistant or it keeps encoding
+# the old codec and the device fails with ESP_ERR_NOT_SUPPORTED.
 media_player:
   - platform: speaker
     id: toniebox_media_player
-    # Deliberately short: ESPHome prefixes friendly_name, so a longer name
-    # here would repeat the device name inside the entity ID.
+    # Short on purpose: ESPHome prefixes friendly_name, so a longer name here
+    # would repeat the device name inside the entity ID.
     name: "Speaker"
     buffer_size: 32768  # the MP3 decoder itself costs ~116KB on top of this
     media_pipeline:
@@ -227,55 +259,96 @@ media_player:
       format: MP3
       sample_rate: 44100
       num_channels: 1
-    # Re-arms the idle timer instantly on play/pause/volume. It fires on state
-    # publishes rather than continuously, so it cannot hold the box awake
-    # through a long track by itself -- the 10s interval polls for that.
+    # Re-arms instantly on play/pause/volume, but on_state fires on publishes
+    # rather than continuously, so it cannot hold the box awake through a long
+    # track on its own -- the 10s interval polls the player for that.
     on_state:
       - script.execute: idle_timer
       - script.execute: clamp_volume
 
-rtttl:
-  id: toniebox_rtttl
-  speaker: toniebox_i2s_speaker
-
-# Proves I2S -> DAC -> amp -> speaker with no network or decoder involved.
-# Useful as the first thing to try after a fresh flash.
-button:
-  - platform: template
-    name: "Play Test Tone"
-    id: play_test_tone
-    on_press:
-      - rtttl.play: "two_short:d=4,o=5,b=100:16e6,16e6"
-
-# Some board revisions populate an MMA8451 here instead. If setup fails to
-# find WHO_AM_I, that is likely why.
 lis3dh:
   id: accelerometer
   i2c_id: toniebox_i2c
   address: 0x19
-  # 250ms, not 1s: the movement LED below reads these, and a second of lag
-  # makes it feel broken. The delta filters keep HA traffic down regardless.
-  update_interval: 250ms
+  # 200ms, not 1s. This is the I2C read cadence only, NOT the ODR -- click still
+  # needs the 400Hz the click: block forces, and this does not touch it. A held
+  # tilt has to track the hand, and at 1s the gesture was over before the second
+  # sample landed. Cheap: three registers over a 400kHz bus.
+  update_interval: 200ms
+  # Tap to skip. Threshold 40 suits the boxes this was developed on; it may
+  # not suit yours. Tune it live with the Tap Threshold / Tap Time Limit
+  # numbers below, then bake the value in here.
+  # Enabling click: forces the accelerometer to 400Hz -- at 100Hz the tap
+  # transient falls between samples and nothing fires.
+  click:
+    threshold: 40
+    time_limit: 10
+    time_latency: 20
+    time_window: 100
+    on_click:
+      # A single physical tap trips more than one axis -- X-neg then Y-pos
+      # ~100ms apart was measured on 2026-08-12. CLICK_CFG watches all three
+      # axes because which one faces sideways depends how the box is sitting,
+      # so the duplicates are filtered here by time instead.
+      - if:
+          condition:
+            lambda: |-
+              // Upright only. A tap fires DURING a tilt -- measured 2026-08-12,
+              // CLICK_SRC=0x59 mid-gesture -- so without this gate tilt-to-seek
+              // and tap-to-skip trip each other on the same movement.
+              //
+              // X is the vertical axis (~-0.97G at rest) and Y+Z is the tilt
+              // signal (~0 flat, +-1.1 tilted). Both measured; see
+              // measurement, not the datasheet -- neither is guessable from
+              // it, and the part is mounted rotated ~45 degrees about X.
+              const float x = id(accel_x).state;
+              const float y = id(accel_y).state;
+              const float z = id(accel_z).state;
+              // NaN means no reading yet, so refuse rather than assume upright.
+              if (isnan(x) || isnan(y) || isnan(z)) return false;
+              if (x > -0.80f) return false;          // tipped or upside down
+              if (fabsf(y + z) > 0.25f) return false;  // mid-tilt
+              return (millis() - id(last_tap_ms)) > 400;
+          then:
+            - lambda: 'id(last_tap_ms) = millis();'
+            - logger.log:
+                format: "tap: CLICK_SRC=0x%02X"
+                args: ['src']
+            - homeassistant.event:
+                event: esphome.tonie_tap
+                # data:, not variables: -- Home Assistant copies `data` into the
+                # event and uses `variables` only to render `data_template`. See
+                # docs/automations.md "Why data: and not variables:".
+                data:
+                  axis: !lambda |-
+                    if (src & 0x01) return "x";
+                    if (src & 0x02) return "y";
+                    return "z";
+                  side: !lambda 'return (src & 0x08) ? "neg" : "pos";'
+            - script.execute: idle_timer
+  # delta 0.05, not 0.02: Z noise at rest exceeds 0.02, so at the 200ms cadence
+  # nearly every sample published -- ~5/sec into HA per box. NOTE this filter
+  # also gates .state, which the tilt and tap lambdas read, so each axis can now
+  # be up to 0.05 stale.
   x:
     id: accel_x
     name: "Accelerometer X"
     filters:
-      - delta: 0.02
+      - delta: 0.05
   y:
     id: accel_y
     name: "Accelerometer Y"
     filters:
-      - delta: 0.02
+      - delta: 0.05
   z:
     id: accel_z
     name: "Accelerometer Z"
     filters:
-      - delta: 0.02
+      - delta: 0.05
 
 # DO NOT add gpio outputs for GPIO45 (POWER_GPIO) or GPIO47 (SD_POWER_GPIO).
-# GPIOBinaryOutput::setup() calls turn_off() at HARDWARE(800) -- after the bus
-# is already up -- which kills the peripheral rail out from under everything.
-# Those two pins belong to the on_boot lambda and nowhere else.
+# GPIOBinaryOutput::setup() calls turn_off() at HARDWARE(800), i.e. after the
+# bus is up, which kills the peripheral rail. They belong to on_boot only.
 output:
   - platform: ledc
     id: led_blue_output
@@ -287,40 +360,31 @@ output:
     id: led_red_output
     pin: GPIO19
 
-# Big ear wakes the box. GPIO20 is also the button binary_sensor above, hence
-# allow_other_uses on both. GPIO7 (WAKEUP_GPIO) is an OR of the small ear and
-# charger-present and would also work, but ext0 takes exactly one pin.
+light:
+  - platform: rgb
+    id: box_led
+    name: "LED"
+    red: led_red_output
+    green: led_green_output
+    blue: led_blue_output
+    effects:
+      - pulse:
+          name: "Charged"
+          transition_length: 1.5s
+          update_interval: 1.5s
+
+# NO wakeup source is declared here on purpose. Both ears and the charger have
+# to wake the box, which needs ext1, and ext1 is mutually exclusive with
+# `wakeup_pin` (ext0). ESPHome's own `esp32_ext1_wakeup:` is no good either --
+# its pin mask is fixed at compile time, and GPIO7 must be included or excluded
+# depending on whether the box is docked at the moment it sleeps. So the mask is
+# built at runtime in box_power_down instead. Declaring anything here would let
+# the component overwrite that on the way into sleep.
+# ext0 and ext1 are mutually exclusive, which is why wakeup_pin is absent.
 deep_sleep:
   id: box_deep_sleep
-  wakeup_pin:
-    number: GPIO20
-    allow_other_uses: true
-    mode:
-      input: true
-      pullup: true
-    inverted: true
-  wakeup_pin_mode: KEEP_AWAKE  # don't re-sleep while the ear is still held
 
-# restore_value MUST stay false. A persisted true would let the box sleep
-# before Home Assistant has ever connected, which is the whole thing this
-# prevents -- and a sleeping box cannot be reached by OTA.
-globals:
-  - id: sleep_armed
-    type: bool
-    restore_value: false
-    initial_value: 'false'
-
-  # Last percentage measured OFF the charger. restore_value is safe here and
-  # necessary: every wake from deep sleep is a cold boot, so without NVS a box
-  # that lives on its charger would read unknown forever. -1 means never yet
-  # measured. Inert on restore -- unlike a switch, no action fires from it.
-  - id: last_battery_pct
-    type: float
-    restore_value: true
-    initial_value: '-1'
-
-# Ships at 5 min idle; 0 disables sleep entirely. Stock's own idle-off is
-# 10 minutes.
+# Ships at 5 min idle. 0 disables sleep entirely.
 number:
   - platform: template
     id: sleep_timeout
@@ -331,11 +395,28 @@ number:
     initial_value: 5
     min_value: 0
     max_value: 120
+    # step 1, not 5: teddybox's POWEROFF_TIMEOUT is 60s, so 1 minute has to be
+    # selectable. Stock's own idle-off is 10 minutes if that ever looks better.
     step: 1
     unit_of_measurement: min
     mode: box
     on_value:
       - script.execute: idle_timer
+
+  # How long Bedtime plays before the box fades down and sleeps. Distinct from
+  # Sleep Timeout above, which is the idle power-off and applies always.
+  - platform: template
+    id: bedtime_minutes
+    name: "Bedtime Timer"
+    icon: "mdi:weather-night"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    min_value: 5
+    max_value: 120
+    step: 5
+    unit_of_measurement: min
+    mode: box
 
   # Ceiling for every volume path: ears, Home Assistant and Music Assistant all
   # land in the media player, which clamp_volume polices.
@@ -354,19 +435,256 @@ number:
     on_value:
       - script.execute: clamp_volume
 
+  # Live tap tuning. These write the LIS3DH registers immediately, so a
+  # threshold can be found by tapping the box and watching the log rather than
+  # by reflashing per guess. Timing counts ODR periods: at the 400Hz click
+  # forces, one count is 2.5ms. Once these feel right, copy the values into the
+  # click: block above and drop these two.
+  - platform: template
+    id: tap_threshold
+    name: "Tap Threshold"
+    icon: "mdi:gesture-tap"
+    optimistic: true
+    restore_value: true
+    initial_value: 40
+    min_value: 1
+    max_value: 127
+    step: 1
+    mode: slider
+    on_value:
+      - lambda: 'id(accelerometer)->set_click_threshold((uint8_t) x);'
+  - platform: template
+    id: tap_time_limit
+    name: "Tap Time Limit"
+    icon: "mdi:gesture-tap"
+    optimistic: true
+    restore_value: true
+    initial_value: 10
+    min_value: 0
+    max_value: 255
+    step: 1
+    mode: box
+    on_value:
+      - lambda: 'id(accelerometer)->set_click_time_limit((uint8_t) x);'
+
+# restore_value MUST stay false -- a persisted true would let the box sleep
+# before Home Assistant is reachable, which is the whole thing this prevents.
+globals:
+  - id: sleep_armed
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+  # Bedtime owns the LED while it runs, so led_update must keep its hands off.
+  # restore_value false on purpose: a wake is a cold boot, and a bedtime that
+  # survived one would leave the box dimming with nothing playing.
+  - id: bedtime_running
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+  # Tilt-to-seek state. All restore_value false -- a wake is a cold boot, and
+  # tilt state that survived one would describe a pose the box is no longer in.
+  # -1 / 0 / +1, the tilt currently being held.
+  - id: tilt_dir
+    type: int
+    restore_value: false
+    initial_value: '0'
+  # Set only by seeing the box upright. A box STORED tilted must never seek, so
+  # a tilt only counts as a gesture if the box was upright first.
+  - id: tilt_armed
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  # 200ms ticks the current tilt has been held, for repeat rate and the cap.
+  - id: tilt_held
+    type: int
+    restore_value: false
+    initial_value: '0'
+  # Set by the decision lambda, consumed by the action below it in the same
+  # tick. homeassistant.event is an action and cannot be fired from a lambda,
+  # so the decision and the firing have to be two steps.
+  - id: tilt_fire
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+  # Last percentage measured OFF the charger. restore_value is safe here and
+  # necessary: every wake from deep sleep is a cold boot, so without NVS a box
+  # that lives on its charger would read unknown forever. -1 means never yet
+  # measured. Inert on restore -- unlike a switch, no action fires from it.
+  - id: last_battery_pct
+    type: float
+    restore_value: true
+    initial_value: '-1'
+
+  # Charge session state. restore_value false on purpose -- both describe the
+  # charge happening right now, and a stale "full" restored on a wake would
+  # light the charged indicator over a flat pack.
+  - id: charge_peak_v
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: charge_full
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: charge_drop_count
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: last_tap_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  # Restart gesture tick count. restore_value false -- a wake is a cold boot,
+  # and a half-finished gesture must not survive one.
+  - id: restart_held
+    type: int
+    restore_value: false
+    initial_value: '0'
+  # Set by the restart lambda, consumed by the action below it -- same split as
+  # tilt_fire, and for the same reason: light.turn_on and delay are actions and
+  # cannot be run from inside a lambda.
+  - id: restart_fire
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
 script:
-  # Steady green = awake and listening. The only other feedback that a wake
-  # worked is audio, so without this the box looks dead until it plays.
+  # The whole LED precedence model in one place. Order below is priority order:
+  # Home Assistant first, then charging, then plain awake.
+  #
   # 70% because anything under ~60% is not visible through the shell -- 25%
   # measured as indistinguishable from off. box_power_down darkens it again.
-  - id: led_awake
+  - id: led_update
     then:
+      - if:
+          condition:
+            and:
+              # Status LED off hands the light back to Home Assistant entirely.
+              - switch.is_on: status_led
+              # Bedtime outranks charging and awake. Without this the 10s
+              # interval below repaints green over the fade within ten seconds
+              # of it starting.
+              - lambda: 'return !id(bedtime_running);'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(charge_sense).state > 4.0f;'
+                then:
+                  - if:
+                      condition:
+                        lambda: 'return id(charge_full);'
+                      then:
+                        # Breathing green: charged, still sitting on the dock.
+                        - light.turn_on:
+                            id: box_led
+                            brightness: 70%
+                            red: 0%
+                            green: 100%
+                            blue: 0%
+                            effect: "Charged"
+                      else:
+                        # Red through to green as the charge climbs.
+                        - light.turn_on:
+                            id: box_led
+                            brightness: 70%
+                            effect: "None"
+                            blue: 0%
+                            # No reading yet means "we do not know", not
+                            # "empty". Falling back to 0 paints the LED solid
+                            # red until Charge Progress first publishes, which
+                            # looks exactly like a flat pack.
+                            red: !lambda |-
+                              const float f = id(charge_progress).state;
+                              if (isnan(f)) return 0.0f;
+                              return 1.0f - (f / 100.0f);
+                            green: !lambda |-
+                              const float f = id(charge_progress).state;
+                              if (isnan(f)) return 1.0f;
+                              return f / 100.0f;
+                else:
+                  # Off the charger: stock shows orange for low battery, green
+                  # otherwise. NaN means "no reading yet", NOT "flat" -- the
+                  # sensor publishes nothing until its first update, and nothing
+                  # at all on a box that has never been measured off its
+                  # charger. Painting orange through that window would cry wolf
+                  # on every boot, the same trap the charge ramp above avoids.
+                  #
+                  # 20% sits below the 3.67V knee in battery_level's curve,
+                  # where the discharge slope turns steep and the remaining
+                  # runtime genuinely is short.
+                  - if:
+                      condition:
+                        lambda: |-
+                          const float b = id(battery_level).state;
+                          return !isnan(b) && b < 20.0f;
+                      then:
+                        # Orange. Close to Bedtime's amber, but Bedtime outranks
+                        # this branch so the two never paint at once. If they
+                        # ever look too alike, change Bedtime -- orange here is
+                        # the stock behaviour and the one worth keeping.
+                        - light.turn_on:
+                            id: box_led
+                            brightness: 70%
+                            effect: "None"
+                            red: 100%
+                            green: 50%
+                            blue: 0%
+                      else:
+                        - light.turn_on:
+                            id: box_led
+                            brightness: 70%
+                            effect: "None"
+                            red: 0%
+                            green: 100%
+                            blue: 0%
+
+  # Bedtime: play with the light on, then fade out, stop and sleep.
+  #
+  # The fade is held to the LAST minute rather than spread over the whole
+  # duration. Below ~60% brightness this LED is indistinguishable from off
+  # through the shell (measured: 25% is indistinguishable), so a linear
+  # 30-minute fade would look like it switched off at minute four and then did
+  # nothing. Holding bright and dropping at the end is the only fade that
+  # actually reads as one.
+  #
+  # mode: restart so re-arming Bedtime restarts the clock rather than stacking.
+  - id: bedtime_start
+    mode: restart
+    then:
+      - lambda: 'id(bedtime_running) = true;'
+      # Warm amber, not the usual green -- this one means "settling down", and
+      # it has to be visibly different from plain awake.
       - light.turn_on:
           id: box_led
           brightness: 70%
-          red: 0%
-          green: 100%
+          effect: "None"
+          red: 100%
+          green: 40%
           blue: 0%
+      # Everything but the final minute. min_value is 5, so this cannot go
+      # negative, but clamp anyway rather than depend on that.
+      - delay: !lambda |-
+          const int ms = (int) id(bedtime_minutes).state * 60000 - 60000;
+          return ms > 0 ? ms : 0;
+      - light.turn_on:
+          id: box_led
+          brightness: 0%
+          transition_length: 60s
+      - delay: 65s  # outlast the transition, or power down cuts it short
+      - lambda: 'id(bedtime_running) = false;'
+      - script.execute: box_power_down
+      # AFTER box_power_down, never before. On the path that sleeps, deep sleep
+      # never returns, and restore_mode ALWAYS_OFF clears the switch on the next
+      # boot -- so this line is dead code there. It exists for the two paths
+      # that DO come back: an ear held, and HA never connected. Both leave the
+      # box awake, and a switch still reading ON there reports a bedtime that
+      # is not running, which cannot be re-armed without an off/on cycle.
+      # Re-enters turn_off_action, whose script.stop lands on this script at its
+      # final action, so nothing is cut short.
+      - switch.turn_off: bedtime
 
   # Pulls the volume back down whenever it exceeds the ceiling. Re-entrant --
   # volume_set fires on_state, which calls this again -- so mode: restart, and
@@ -394,125 +712,361 @@ script:
             - script.execute: box_power_down
 
   # The only path to sleep. Codec down, then both rails, then hold the pads
-  # through sleep -- without the hold they revert. Order follows teddybox's
-  # audio_board_poweroff().
+  # through sleep -- without the hold they revert. Order and register writes
+  # follow teddybox's audio_board_poweroff().
   - id: box_power_down
     then:
-      # THE interlock. Everything below is unreachable until Home Assistant has
-      # connected once, so every boot has an OTA window no matter what got
-      # persisted. Do not remove it, do not add another setter of sleep_armed,
-      # and do not move this below the actions.
+      # THE interlock. Everything below is unreachable until Home Assistant
+      # has actually connected once, so every boot has an OTA window no
+      # matter what got persisted. Do not remove, do not add other setters
+      # of sleep_armed, do not move this below the actions.
       - if:
           condition:
             lambda: 'return id(sleep_armed);'
           then:
-            - media_player.stop:
-            - light.turn_off: box_led
-            - lambda: |-
-                // --- dac3100_deinit() --- must precede the rail cut, the
-                // codec is powered from GPIO45.
-                uint8_t page0[2] = {0x00, 0x00};  // page select -> page 0
-                uint8_t reset[2] = {0x01, 0x01};  // SOFTWARE_RESET
-                id(toniebox_i2c)->write(0x18, page0, 2);
-                id(toniebox_i2c)->write(0x18, reset, 2);
+            # Replaces ext0's wakeup_pin_mode: KEEP_AWAKE, which went away with
+            # ext0 -- ext1 has no equivalent. MUST stay above the teardown: a
+            # deferral below it would leave the box awake with its rails cut and
+            # the codec in reset.
+            - if:
+                condition:
+                  lambda: |-
+                    return gpio_get_level(GPIO_NUM_20) == 0 ||
+                           gpio_get_level(GPIO_NUM_21) == 0;
+                then:
+                  - logger.log: "sleep deferred: an ear is still held"
+                  - script.execute: idle_timer
+                else:
+                  - media_player.stop:
+                  - light.turn_off: box_led
+                  - lambda: |-
+                      // --- dac3100_deinit() --- must precede the rail cut, the
+                      // codec is powered from GPIO45.
+                      uint8_t page0[2] = {0x00, 0x00};  // page select -> page 0
+                      uint8_t reset[2] = {0x01, 0x01};  // SOFTWARE_RESET
+                      id(toniebox_i2c)->write(0x18, page0, 2);
+                      id(toniebox_i2c)->write(0x18, reset, 2);
 
-                // --- audio_board_power(false) ---
-                gpio_set_level(GPIO_NUM_45, 0);  // POWER_GPIO    -> LOW
-                gpio_set_level(GPIO_NUM_47, 1);  // SD_POWER_GPIO -> HIGH (active low)
+                      // --- audio_board_power(false) ---
+                      gpio_set_level(GPIO_NUM_45, 0);  // POWER_GPIO    -> LOW
+                      gpio_set_level(GPIO_NUM_47, 1);  // SD_POWER_GPIO -> HIGH (active low)
 
-                // Both pads are outside the S3 RTC domain (GPIO0-21), so the
-                // hold is what keeps them put once the digital domain drops.
-                gpio_hold_en(GPIO_NUM_45);
-                gpio_hold_en(GPIO_NUM_47);
-                gpio_deep_sleep_hold_en();
-            - deep_sleep.allow: box_deep_sleep
-            - deep_sleep.enter: box_deep_sleep
+                      // Both pads are outside the S3 RTC domain (GPIO0-21), so
+                      // the hold is what keeps them put once the digital domain
+                      // goes down.
+                      gpio_hold_en(GPIO_NUM_45);
+                      gpio_hold_en(GPIO_NUM_47);
+                      gpio_deep_sleep_hold_en();
+                  - lambda: |-
+                      // Both ears are up by the time we get here, so GPIO7 low
+                      // means docked, not squeezed. An already-low pin in an
+                      // ANY_LOW mask is an instant wake, so a docked box must
+                      // leave GPIO7 out or it could never sleep on its charger.
+                      // Read the pin, never charge_sense: it polls at 60s on
+                      // 60s, so that reading can be a minute
+                      // stale at the moment it matters.
+                      // Nothing else in this config configures GPIO7, so read
+                      // it cold and it returns 0 -- the box looks docked, and
+                      // the charger silently never makes it into the mask.
+                      // Configure the pad here so this behaves
+                      // identically whether or not the diagnostic is present.
+                      gpio_config_t wake_cfg = {};
+                      wake_cfg.pin_bit_mask = 1ULL << 7;
+                      wake_cfg.mode = GPIO_MODE_INPUT;
+                      wake_cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+                      gpio_config(&wake_cfg);
+                      delayMicroseconds(50);  // let the pull settle
+
+                      uint64_t mask = (1ULL << 20) | (1ULL << 21);
+                      if (gpio_get_level(GPIO_NUM_7) != 0)
+                        mask |= (1ULL << 7);
+
+                      // ESPHome's ext1 path does no pin setup at all, so these
+                      // pads would float through sleep and ANY_LOW would wake
+                      // the box continuously. rtc_gpio_* is the textbook API
+                      // but driver/rtc_io.h is NOT in ESPHome's include chain
+                      // -- measured, it fails to compile. This is ESPHome's own
+                      // ext0 sequence instead: driver/gpio.h only, and already
+                      // proven on GPIO20, which it has been holding through
+                      // sleep on these boxes all along.
+                      const gpio_num_t pins[] = {GPIO_NUM_7, GPIO_NUM_20, GPIO_NUM_21};
+                      for (gpio_num_t pin : pins) {
+                        if (mask & (1ULL << pin)) {
+                          gpio_sleep_set_pull_mode(pin, GPIO_PULLUP_ONLY);
+                          gpio_sleep_set_direction(pin, GPIO_MODE_INPUT);
+                          gpio_hold_en(pin);
+                        }
+                      }
+                      gpio_deep_sleep_hold_en();
+
+                      ESP_LOGD("sleep", "ext1 mask 0x%llX (charger %s)", mask,
+                               (mask & (1ULL << 7)) ? "absent" : "docked");
+                      esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+                  # Belt and braces since KEEP_AWAKE went away: enter is manual
+                  # and skips prevent_ anyway, and nothing re-enters from loop()
+                  # now that no wakeup_pin or run_duration is declared.
+                  - deep_sleep.allow: box_deep_sleep
+                  - deep_sleep.enter: box_deep_sleep
           else:
             - logger.log: "power down refused: HA has never connected"
 
-  # Movement indicator. mode: restart so continued handling keeps it lit.
-  - id: movement_led
-    mode: restart
-    then:
-      - light.turn_on:
-          id: box_led
-          brightness: 60%
-          red: 100%
-          green: 100%
-          blue: 100%
-      - delay: 3s
-      # Back to the awake indicator, NOT off -- picking the box up is how you
-      # wake it, so turning off here would kill the indicator 3s after boot.
-      - script.execute: led_awake
-
-# Light the LED on REAL movement only. At rest the acceleration vector has a
-# magnitude of ~1G whatever the box's orientation, so deviation from 1G means
-# the box is actually being accelerated -- it does not fire on tilt, on a new
-# resting position, or on the +/-0.06G of sensor noise seen while it sits
-# still. Raise the threshold if a heavy footstep sets it off.
+# A box asleep on its charger cannot show charge state, so charging holds the
+# idle countdown off -- it is on mains power at the time. Switchable, because
+# that is a real behaviour change: with it on, a docked box never sleeps.
+# The LED refresh below is deliberately outside the guard; it has to keep
+# running either way for as long as the box is awake.
 interval:
-  - interval: 250ms
-    then:
-      - if:
-          condition:
-            lambda: |-
-              float x = id(accel_x).state, y = id(accel_y).state, z = id(accel_z).state;
-              if (isnan(x) || isnan(y) || isnan(z)) return false;
-              return fabsf(sqrtf(x * x + y * y + z * z) - 1.0f) > 0.15f;
-          then:
-            - script.execute: movement_led
-            - script.execute: idle_timer
-
-  # Playback keeps the box awake. The media player's on_state re-arms the idle
-  # timer the instant someone hits play, but it fires when the player publishes
-  # rather than continuously, so it cannot hold the box through a long track --
-  # polled here instead. ANNOUNCING counts: a TTS announcement is the case most
-  # likely to be the only thing playing.
   - interval: 10s
     then:
       - if:
           condition:
-            lambda: |-
-              auto s = id(toniebox_media_player).state;
-              return s == media_player::MEDIA_PLAYER_STATE_PLAYING ||
-                     s == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
+            or:
+              - and:
+                  - switch.is_on: awake_on_charger
+                  - lambda: 'return id(charge_sense).state > 4.0f;'
+              # Bedtime keeps its own clock and ends by calling box_power_down.
+              # Without this the idle timeout truncates it -- Sleep Timeout
+              # ships at 5 min against a Bedtime Timer defaulting to 30.
+              - lambda: 'return id(bedtime_running);'
+              # Playback itself. on_state fires on publishes, not continuously,
+              # so a long track re-armed nothing and the box slept under a
+              # listener. Polled here instead. This one actually bit: a box
+              # asleep mid-story with someone listening to it.
+              - lambda: |-
+                  auto s = id(toniebox_media_player).state;
+                  return s == media_player::MEDIA_PLAYER_STATE_PLAYING ||
+                         s == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
           then:
             - script.execute: idle_timer
+      - script.execute: led_update
 
-# Soft power. ALWAYS_ON, never RESTORE_*: a persisted OFF would fire
-# turn_off_action from setup() at priority 798, i.e. before wifi at 250 -- the
-# box would sleep half a second into every boot and never get an IP. That
-# happened, and esptool write_flash does not erase NVS, so it was permanent.
+  # Tilt to seek. Reports to Home Assistant and nothing else -- the box has no
+  # seek action of its own, and gesture-to-media mapping belongs in HA with the
+  # tap and tag automations.
+  #
+  # Y+Z is the signal, not Y or Z alone: the part is mounted ~45 degrees rotated
+  # about X, so the two move together. ~0 upright against +-1.1 tilted, so 0.40
+  # has enormous margin. Measured: +0.84 tilted one way, -0.73 the other.
+  - interval: 200ms
+    then:
+      - lambda: |-
+          id(tilt_fire) = 0;
+          const float x = id(accel_x).state;
+          const float y = id(accel_y).state;
+          const float z = id(accel_z).state;
+          if (isnan(x) || isnan(y) || isnan(z)) return;
+          // Roughly upright only. Turning the box over for the restart gesture
+          // swings Y+Z past -1.2 on the way (measured 2026-08-16), which would
+          // otherwise fire seek events at Home Assistant mid-flip. Real tilts
+          // measured X between -0.56 and -0.64, so -0.30 clears them easily
+          // while rejecting anything on its side or inverted.
+          if (x > -0.30f) {
+            id(tilt_dir) = 0;
+            id(tilt_held) = 0;
+            return;
+          }
+          const float s = y + z;
+
+          // Upright: re-arm and reset. 0.25 here against 0.40 to enter is the
+          // hysteresis band -- a box resting near a single threshold would
+          // chatter in and out of a gesture on noise alone.
+          if (fabsf(s) < 0.25f) {
+            id(tilt_armed) = true;
+            id(tilt_dir) = 0;
+            id(tilt_held) = 0;
+            return;
+          }
+          // Tilted but never seen upright: a box put away on its side. Stays
+          // silent until someone sets it upright, which is what arms it.
+          if (!id(tilt_armed)) return;
+          // In the hysteresis band: hold whatever state we are already in.
+          if (fabsf(s) < 0.40f) return;
+
+          const int dir = (s > 0.0f) ? 1 : -1;
+          if (dir != id(tilt_dir)) {   // gesture starts, or reverses
+            id(tilt_dir) = dir;
+            id(tilt_held) = 0;
+            id(tilt_fire) = dir;
+            return;
+          }
+
+          // Held. Repeat so HA can seek in steps for as long as the tilt lasts.
+          id(tilt_held) += 1;
+          // ~30s cap, then disarm. Without it a box left tilted -- knocked over
+          // behind a sofa, say -- would fire at HA forever. Disarmed, it needs
+          // to see upright again before it can seek.
+          if (id(tilt_held) > 150) {
+            id(tilt_armed) = false;
+            id(tilt_dir) = 0;
+            return;
+          }
+          if (id(tilt_held) % 3 == 0)   // every 3rd tick = 600ms
+            id(tilt_fire) = dir;
+      - if:
+          condition:
+            lambda: 'return id(tilt_fire) != 0;'
+          then:
+            # pos/neg, matching tonie_tap's `side`, NOT forward/back. Which
+            # physical direction is which was never established -- the 2026-08-12
+            # measurements recorded "one way" and "the other". HA decides.
+            - homeassistant.event:
+                event: esphome.tonie_tilt
+                # data:, not variables: -- see the tap event above.
+                data:
+                  side: !lambda 'return id(tilt_fire) > 0 ? "pos" : "neg";'
+            - script.execute: idle_timer
+
+  # Restart: upside down + both ears held ~10s. Charger state is deliberately
+  # NOT checked -- stock uses it to tell restart from factory reset, and there
+  # is no factory reset here (no cloud state to clear), so it has nothing to
+  # select between.
+  #
+  # Separate from the tilt interval above on purpose: that lambda returns early
+  # on almost every path, so this cannot simply be appended to it.
+  - interval: 200ms
+    then:
+      - lambda: |-
+          // Cleared every tick, like tilt_fire: without this a reboot that did
+          // not take would leave the flag set and re-blink on every tick.
+          id(restart_fire) = false;
+          // X is the vertical axis, ~-0.97G at rest, so upside down is ~+0.97G.
+          // Measured, not derived: the mounting orientation is not in any
+          // datasheet. Confirm it on your own board before trusting it.
+          const float x = id(accel_x).state;
+          if (isnan(x)) { id(restart_held) = 0; return; }
+          // 0.70. Started at 0.90, dropped to 0.85 for the delta: 0.05 filter,
+          // then measured on hardware 2026-08-16: a box held inverted in the
+          // hand reads X between 0.79 and 1.26, and a dip to 0.812 reset the
+          // counter mid-gesture. Hand shake, not tipping. 0.70 absorbs it and
+          // is still nowhere near on-its-side (~0) or upright (-0.97).
+          if (x < 0.70f) { id(restart_held) = 0; return; }
+          if (!id(ear_big_button).state || !id(ear_small_button).state) {
+            id(restart_held) = 0;
+            return;
+          }
+          id(restart_held) += 1;
+          if (id(restart_held) < 50) return;   // 50 * 200ms = 10s
+          id(restart_held) = 0;
+          id(restart_fire) = true;
+      - if:
+          condition:
+            lambda: 'return id(restart_fire);'
+          then:
+            - logger.log:
+                level: WARN
+                tag: "restart"
+                format: "restart gesture: upside down + both ears 10s"
+            # Blink blue before rebooting. Verified working 2026-08-16, but with
+            # no feedback at all: the reboot takes ~5s and the only sign it
+            # happened was the log line. Blue is free -- charging is the
+            # red/green ramp, Bedtime amber, low battery orange, awake green --
+            # so nothing else can paint it and it cannot be misread.
+            #
+            # transition_length: 0s on the colour steps -- the light carries a
+            # 1s default transition, which would smear the blink into one dim
+            # fade. It cannot go on the same action as effect: ESPHome puts
+            # transition_length, flash_length and effect in one "transformer"
+            # exclusion group and rejects any two together. Hence the bare
+            # effect: "None" first, which also stops a box blinking mid
+            # "Charged" from breathing through the blink.
+            - light.turn_on:
+                id: box_led
+                effect: "None"
+            - light.turn_on:
+                id: box_led
+                brightness: 100%
+                transition_length: 0s
+                red: 0%
+                green: 0%
+                blue: 100%
+            - delay: 200ms
+            - light.turn_off:
+                id: box_led
+                transition_length: 0s
+            - delay: 200ms
+            - light.turn_on:
+                id: box_led
+                brightness: 100%
+                transition_length: 0s
+                red: 0%
+                green: 0%
+                blue: 100%
+            - delay: 200ms
+            - lambda: 'App.safe_reboot();'
+
 switch:
   - platform: template
     id: box_power
     name: "Power"
     icon: "mdi:power"
     optimistic: true
+    # ALWAYS_ON, never RESTORE_*: a persisted OFF would fire turn_off_action
+    # from setup() at priority 798, i.e. before wifi at 250 -- the box slept
+    # half a second into boot and never got an IP.
     restore_mode: ALWAYS_ON
     turn_on_action:
       - script.execute: idle_timer
-      - script.execute: led_awake
+      - script.execute: led_update
     turn_off_action:
       - script.execute: box_power_down
 
+  # Bedtime. Does NOT start playback -- it runs alongside whatever is already
+  # playing, which is how the stock sleep timer works: put a figure on, start
+  # the story, then set the timer. Plays for Bedtime Timer minutes, fades the
+  # LED down over the last one, then stops and sleeps.
+  #
+  # ALWAYS_OFF, never RESTORE_*: a persisted ON fires turn_on_action from
+  # setup() and would start a bedtime on every boot. Same trap box_power above
+  # documents, and a wake from deep sleep is a boot.
+  - platform: template
+    id: bedtime
+    name: "Bedtime"
+    icon: "mdi:sleep"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - script.execute: bedtime_start
+    turn_off_action:
+      # Hand the LED back before clearing the flag, or led_update's next pass
+      # races the in-flight fade transition.
+      - script.stop: bedtime_start
+      - lambda: 'id(bedtime_running) = false;'
+      - script.execute: led_update
 
-light:
-  - platform: rgb
-    id: box_led
-    name: "LED"
-    red: led_red_output
-    green: led_green_output
-    blue: led_blue_output
+  # The escape hatch for the LED precedence model. On, the box drives the LED
+  # itself (awake / charging / charged). Off, it stops touching it and Home
+  # Assistant has the light to itself -- which is how it behaved before the box
+  # started showing status.
+  - platform: template
+    id: status_led
+    name: "Status LED"
+    icon: "mdi:led-on"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - script.execute: led_update
+    turn_off_action:
+      - logger.log: "status LED off -- Home Assistant owns the LED now"
 
-# The ear buttons are physical push-buttons, not capacitive touch.
+  # Whether a docked box is allowed to sleep. On, it stays awake while charging
+  # so it can show charge state. Off, the normal idle timeout applies. No
+  # actions on purpose -- the interval below just reads the state, so nothing
+  # fires from the restore at boot.
+  - platform: template
+    id: awake_on_charger
+    name: "Stay Awake on Charger"
+    icon: "mdi:power-plug-battery"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+# Ear buttons are physical push-buttons, not capacitive touch.
+# Short press = volume, hold = soft power.
 binary_sensor:
   - platform: gpio
     id: ear_big_button
     name: "Ear Big Button"
     pin:
       number: GPIO20
-      allow_other_uses: true  # also the deep sleep wakeup pin
       mode:
         input: true
         pullup: true
@@ -523,11 +1077,24 @@ binary_sensor:
         then:
           - media_player.volume_up:
           - script.execute: idle_timer
-      # 12s, not 5s: measured holds run 8-11s and a 5s window is unhittable.
+      # 5s was unhittable in practice -- real holds measured 7.8-11.2s and the
+      # click never matched, so the gesture looked broken when it was only out
+      # of range. No collision with the both-ears restart gesture, which also
+      # requires upside-down.
       - min_length: 1s
         max_length: 12s
         then:
-          - switch.turn_on: box_power
+          # Not while upside down -- that is the restart gesture, and an
+          # aborted attempt would otherwise release straight into a power
+          # toggle. Same threshold as the restart interval. isnan passes, so a
+          # dead accelerometer cannot cost you the ear power-off.
+          - if:
+              condition:
+                lambda: |-
+                  const float x = id(accel_x).state;
+                  return isnan(x) || x < 0.85f;
+              then:
+                - switch.turn_on: box_power
   - platform: gpio
     id: ear_small_button
     name: "Ear Small Button"
@@ -543,78 +1110,165 @@ binary_sensor:
         then:
           - media_player.volume_down:
           - script.execute: idle_timer
+      # 5s was unhittable in practice -- real holds measured 7.8-11.2s and the
+      # click never matched, so the gesture looked broken when it was only out
+      # of range. No collision with the both-ears restart gesture, which also
+      # requires upside-down.
       - min_length: 1s
         max_length: 12s
         then:
-          - switch.turn_off: box_power
+          # Not while upside down -- that is the restart gesture, and an
+          # aborted attempt would otherwise release straight into a power
+          # toggle. Same threshold as the restart interval. isnan passes, so a
+          # dead accelerometer cannot cost you the ear power-off.
+          - if:
+              condition:
+                lambda: |-
+                  const float x = id(accel_x).state;
+                  return isnan(x) || x < 0.85f;
+              then:
+                - switch.turn_off: box_power
   - platform: gpio
     id: headphone_detect
     name: "Headphone Detect"
     pin: GPIO48
 
-# Divider ratios from the toniebox-pcb pinout. Without them these report the
-# voltage at the pin, not the rail.
+# Divider ratios are from the toniebox-pcb pinout, not measured on this board.
+# Pack is 3-cell NiMH, so ~4.5V while charging is normal.
 sensor:
   - platform: adc
     id: charge_sense
     name: "Charge Sense"
     pin: GPIO8
     attenuation: 12db
+    # dump_config showed Samples: 1, and the divider is ~25k Thevenin, above
+    # Espressif's <10k guidance for the ADC input. Averaging in
+    # hardware cuts the jitter with no added lag -- which -dV detection needs,
+    # since the drop it looks for is the same size as the raw noise.
+    samples: 16
     update_interval: 60s
     filters:
-      - multiply: 2.0   # R75/R72 100k/100k -- 5V charger rail
+      - multiply: 2.0   # R75/R72 100k/100k
   - platform: adc
     id: battery_voltage
     name: "Battery Voltage"
     pin: GPIO9
     attenuation: 12db
+    # dump_config showed Samples: 1, and the divider is ~25k Thevenin, above
+    # Espressif's <10k guidance for the ADC input. Averaging in
+    # hardware cuts the jitter with no added lag -- which -dV detection needs,
+    # since the drop it looks for is the same size as the raw noise.
+    samples: 16
     update_interval: 60s
     filters:
-      - multiply: 4.03  # R57/R58 (100k+33k)/33k -- 3-cell NiMH, 3.6V nominal
+      - multiply: 4.03  # R57/R58 (100k+33k)/33k
+    # ONE clock for the whole battery picture. battery_level and charge_progress
+    # used to poll on their own intervals while reading this sensor's .state --
+    # two independent clocks, which is exactly what the Charging sensor above
+    # already refuses to do. Every wake from deep sleep is a cold boot, so
+    # battery_level could fire before this had ever published, read NaN, return
+    # nothing, and leave Battery showing "Unknown" until the next tick.
+    # Driving both from `x` here removes the race outright.
+    #
+    # Order matters: charge_progress first, because battery_level reads it.
+    on_value:
+      - sensor.template.publish:
+          id: charge_progress
+          state: !lambda |-
+            if (id(charge_sense).state < 4.0f) {
+              id(charge_peak_v) = 0.0f;   // charger gone, next session is clean
+              id(charge_full) = false;
+              id(charge_drop_count) = 0;
+              return NAN;
+            }
+            if (x > id(charge_peak_v))
+              id(charge_peak_v) = x;
+            // NiMH rises through the charge, peaks, then falls slightly once
+            // full -- the classic -dV termination. The 4.50V floor stops noise
+            // early in the charge latching "full" before the pack has climbed
+            // anywhere near it.
+            //
+            // The drop must hold for three consecutive reads. A real -dV is a
+            // sustained fall; the raw ADC was seen bouncing 4.61/4.62V, the
+            // same 10-20mV this looks for, so one sample proves nothing.
+            if (!id(charge_full) && id(charge_peak_v) > 4.50f && x < id(charge_peak_v) - 0.02f) {
+              id(charge_drop_count) += 1;
+              if (id(charge_drop_count) >= 3)
+                id(charge_full) = true;
+            } else {
+              id(charge_drop_count) = 0;
+            }
+            if (id(charge_full))
+              return 100.0f;
+            // 4.35-4.65V is the constant-current band from the pack table.
+            float f = (x - 4.35f) / (4.65f - 4.35f);
+            if (f < 0.0f) f = 0.0f;
+            if (f > 1.0f) f = 1.0f;
+            return f * 100.0f;
+      - sensor.template.publish:
+          id: battery_level
+          state: !lambda |-
+            // On the charger the pack is driven to 4.35-4.65V, far off the
+            // resting curve, so voltage says nothing about state of charge.
+            // Report the last reading taken off the charger rather than a fake
+            // 100%. Stale, but stale in the safe direction.
+            if (id(charge_sense).state > 4.0f) {
+              // Take whichever is higher: charging only ever adds charge, so
+              // the number must never go backwards. Without this, docking a
+              // full pack would drop it from 100% to ~88% -- the CC-band
+              // mapping and the resting curve are different scales, and that
+              // jump reads as a fault.
+              float best = id(last_battery_pct);
+              const float prog = id(charge_progress).state;
+              if (!isnan(prog) && prog > best)
+                best = prog;
+              if (best < 0.0f) return NAN;  // never measured off charger yet
+              return best;
+            }
+
+            static const float pts[][2] = {
+              {3.00f,   0.0f}, {3.30f,   5.0f}, {3.60f,  15.0f}, {3.67f, 30.0f},
+              {3.70f,  45.0f}, {3.80f,  70.0f}, {3.90f,  88.0f}, {4.05f, 100.0f}};
+            const int n = sizeof(pts) / sizeof(pts[0]);
+            float pct = 100.0f;
+            if (x <= pts[0][0]) {
+              pct = 0.0f;
+            } else if (x < pts[n - 1][0]) {
+              for (int i = 1; i < n; i++) {
+                if (x <= pts[i][0]) {
+                  const float t = (x - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
+                  pct = pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1]);
+                  break;
+                }
+              }
+            }
+            id(last_battery_pct) = pct;
+            return pct;
 
   # Rough state-of-charge, NOT a gauge -- voltage is a poor SoC proxy for NiMH
-  # and sags under audio load. The curve below is anchored on the stock
-  # firmware's own NVS thresholds (3.60V critical, 3.67/3.70V low) with the
-  # ends fitted to a 3-cell pack; treat anything between them as indicative.
+  # and sags under audio load. Verified against two boxes at 4.04V/100% and
+  # 3.96V/93%, which is about as good as this method gets.
   - platform: template
     id: battery_level
     name: "Battery"
     device_class: battery
     unit_of_measurement: "%"
     accuracy_decimals: 0
-    update_interval: 60s
+    # A publish target, not a poller -- battery_voltage's on_value computes it.
+    update_interval: never
     filters:
       - median:
           window_size: 5
           send_every: 1
-    lambda: |-
-      const float v = id(battery_voltage).state;
-      if (isnan(v)) return {};
 
-      // On the charger the pack is driven to 4.35-4.65V, far off the resting
-      // curve, so voltage says nothing about state of charge. Report the last
-      // reading taken off the charger rather than a fake 100%. Stale, but
-      // stale in the safe direction -- it under-reports while charging.
-      if (id(charge_sense).state > 4.0f) {
-        if (id(last_battery_pct) < 0.0f) return {};  // never measured yet
-        return id(last_battery_pct);
-      }
-
-      static const float pts[][2] = {
-        {3.00f,   0.0f}, {3.30f,   5.0f}, {3.60f,  15.0f}, {3.67f, 30.0f},
-        {3.70f,  45.0f}, {3.80f,  70.0f}, {3.90f,  88.0f}, {4.05f, 100.0f}};
-      const int n = sizeof(pts) / sizeof(pts[0]);
-      float pct = 100.0f;
-      if (v <= pts[0][0]) {
-        pct = 0.0f;
-      } else if (v < pts[n - 1][0]) {
-        for (int i = 1; i < n; i++) {
-          if (v <= pts[i][0]) {
-            const float t = (v - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
-            pct = pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1]);
-            break;
-          }
-        }
-      }
-      id(last_battery_pct) = pct;
-      return pct;
+  # internal: the LED ramp and the Battery sensor above both read this, but it
+  # is not a second thing for a human to look at. Battery is the one figure.
+  # The -dV termination is textbook NiMH and has been seen to fire on this
+  # charger, but the percentage it reports along the way is a guess.
+  - platform: template
+    id: charge_progress
+    internal: true
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    # A publish target, not a poller -- battery_voltage's on_value computes it.
+    update_interval: never
