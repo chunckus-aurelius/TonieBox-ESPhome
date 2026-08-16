@@ -186,9 +186,11 @@ actions:
         {{ device_entities(trigger.event.data.device_id)
            | select('match', 'media_player\.') | first }}
   - choose:
+      # neg = right side = forward. Verified on hardware 2026-08-16; see
+      # "Which side is which" below before swapping these.
       - conditions:
           - condition: template
-            value_template: "{{ trigger.event.data.side == 'pos' }}"
+            value_template: "{{ trigger.event.data.side == 'neg' }}"
         sequence:
           - action: media_player.media_next_track
             target:
@@ -199,23 +201,36 @@ actions:
           entity_id: "{{ box }}_2"
 ```
 
-Three things to settle before this is usable:
+### Which side is which
 
-- **Verify the event carries `side` before blaming the thresholds.** Open
-  Developer Tools → Events, listen for `esphome.tonie_tap`, and tap the box. You
-  want to see `axis` and `side` alongside `device_id`. If only `device_id` is
-  there, the firmware is sending `variables:` — see above. An event that arrives
-  empty still runs this automation, and because the `choose` condition is then
-  false it takes the `default:` branch, so **every tap skips backwards**. That
-  looks like a direction bug and is not one.
+**Left is `side: pos`. Right is `side: neg`.** Measured on hardware 2026-08-16
+with the accelerometer mounted as it is in this board revision, so it should
+hold for any box built the same way — but it costs one tap to confirm, and
+getting it backwards is invisible until you wonder why skipping feels wrong.
+
+With the mapping above, a right tap goes to the next track and a left tap
+restarts the current one. That left behaviour is `media_previous_track`'s normal
+two-stage semantics — first press restarts, second press goes back — and it
+happens to be what a stock Toniebox does, so it is worth keeping rather than
+working around.
+
+### Things that are easy to get wrong
+
 - **The threshold is per box.** Set it with `threshold:` under `click:` and
   watch the ESPHome log, which prints every `CLICK_SRC` it sees at DEBUG.
 - **One physical tap usually trips two or three axes**, ~100–230 ms apart, so
   the box fires two or three events per tap. Debounce on the device rather than
   in Home Assistant — a `globals:` `uint32_t last_tap_ms` and a condition of
   `(millis() - id(last_tap_ms)) > 400` around the whole `on_click` body costs
-  nothing and keeps the automation stateless. Gating on one axis does not work:
-  which axis faces sideways depends on how the box is sitting.
+  nothing and keeps the automation stateless.
+- **Think twice before filtering on `axis`.** With the upright gate below in
+  place a left/right tap lands on `y`, so `trigger.event.data.axis == 'y'` will
+  reject a knock on the top or front that would otherwise skip in an arbitrary
+  direction. The catch is the debounce above: only the *first* axis to trip is
+  reported, and if a side tap happens to register on `x` first, that condition
+  silently drops a legitimate tap. The symptom is specific and worth knowing —
+  the device log prints `tap: CLICK_SRC=0x..` and nothing skips. Decide which
+  failure you would rather have.
 
 If you also use tilt gestures, note that a tap fires *during* a tilt
 (`CLICK_SRC=0x59` was measured mid-gesture), so the two will trip each other.
