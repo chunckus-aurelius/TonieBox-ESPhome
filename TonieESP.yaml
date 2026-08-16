@@ -185,19 +185,24 @@ text_sensor:
     icon: "mdi:nfc-variant"
     update_interval: never  # pushed from the triggers above
 
+# TEST TONE -- commented out, uncomment if you want it.
+#
 # Proves I2S -> DAC -> amp -> speaker with no network, no Home Assistant and no
-# decoder involved. The first thing to try after a fresh flash, and the fastest
-# way to tell a wiring fault from a Music Assistant one.
-rtttl:
-  id: toniebox_rtttl
-  speaker: toniebox_i2s_speaker
-
-button:
-  - platform: template
-    name: "Play Test Tone"
-    id: play_test_tone
-    on_press:
-      - rtttl.play: "two_short:d=4,o=5,b=100:16e6,16e6"
+# decoder involved, which makes it the fastest way to tell a wiring or codec
+# fault from a Music Assistant one. Worth enabling for a first flash on new
+# hardware, then commenting out again -- it adds a button to every box that
+# nobody needs day to day.
+#
+# rtttl:
+#   id: toniebox_rtttl
+#   speaker: toniebox_i2s_speaker
+#
+# button:
+#   - platform: template
+#     name: "Play Test Tone"
+#     id: play_test_tone
+#     on_press:
+#       - rtttl.play: "two_short:d=4,o=5,b=100:16e6,16e6"
 
 dac3100:
   id: audio_codec

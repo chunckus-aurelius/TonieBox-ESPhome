@@ -194,7 +194,7 @@ same rule: status is what the example config in this repo gives you.
 | Configurable idle timeout | ✅ | `Sleep Timeout` in minutes, 0 to disable. Stock is a fixed 10 minutes with no way to change it |
 | Volume ceiling | ✅ | `Max Volume` clamps every path — ears, Home Assistant, Music Assistant. Stock has no cap |
 | The LED as an HA light | ✅ | An RGB light entity, and a `Status LED` switch that hands it to Home Assistant entirely — with that off, nothing on the device repaints over an automation's colour. That is what makes the sunrise alarm possible without firmware |
-| Test tone | ✅ | A button that proves I2S → DAC → amp → speaker with no network involved. Worth keeping during bring-up |
+| Test tone | 🟡 | A button that proves I2S → DAC → amp → speaker with no network involved — the fastest way to tell a wiring or codec fault from a Music Assistant one. **Shipped commented out** in `TonieESP.yaml`; uncomment the `rtttl:` and `button:` blocks for a first flash on new hardware, then comment them out again |
 | Headphone detect | 🟡 | Exposed as a binary sensor on GPIO48. Nothing acts on it and the polarity has not been verified |
 | Timer wake from deep sleep | ⬜ | A sleeping box can only be woken by a wake pin. Waking on a schedule would need `esp_sleep_enable_timer_wakeup` alongside the wake mask |
 | TTS announcements over music | ⛔ | Unlikely to fit at 44.1 kHz on this hardware — there is no PSRAM, so every buffer is internal SRAM |

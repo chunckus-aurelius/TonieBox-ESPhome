@@ -120,10 +120,13 @@ not trigger this.
 
 ## Tap gestures
 
-Unlike the tag and sensor examples above, this one needs a change on the box
-first. `lis3dh` gives `on_click` the raw `CLICK_SRC` byte and nothing more — the
-example config does not enable `click:` at all, and no firmware here fires a tap
-event on its own. Send one explicitly:
+The example config already does this — it enables `click:` and fires
+`esphome.tonie_tap` on every accepted tap, so if you are running `TonieESP.yaml`
+you can skip to the automation below. This is what it is doing, and what to
+write if you are building a config from scratch.
+
+`lis3dh` gives `on_click` the raw `CLICK_SRC` byte and nothing more, so the
+event has to be assembled and sent explicitly:
 
 ```yaml
 lis3dh:
@@ -278,6 +281,12 @@ conditions:
   - condition: template
     value_template: "{{ states('light.tonie_the_example_led') != 'unavailable' }}"
 actions:
+  # Hand the light to Home Assistant first. The firmware repaints its status
+  # colour on a 10 s interval, so without this the sunrise is overwritten
+  # within ten seconds of starting.
+  - action: switch.turn_off
+    target:
+      entity_id: switch.tonie_the_example_status_led
   # Start dim, at the bottom of what is actually visible — see below.
   - action: light.turn_on
     target:
@@ -307,6 +316,12 @@ actions:
     data:
       media_id: "Morning Playlist"
       media_type: playlist
+  # Give the light back, so the box resumes showing charge and battery state.
+  - delay:
+      minutes: 30
+  - action: switch.turn_on
+    target:
+      entity_id: switch.tonie_the_example_status_led
 ```
 
 **Start the ramp at 60%, not at 0.** Below roughly 60% brightness this LED is
@@ -316,11 +331,12 @@ twenty-minute climb from 0 would show nothing at all until about minute twelve,
 then appear to snap on. The usable range is the top of the scale, so ramp within
 it.
 
-**If your config paints the LED on the device**, as the sibling configs behind
-this repo do, add a switch that suppresses that painting and turn it off at the
-start of the automation, then back on at the end — otherwise a device-side
-status colour will repaint over the sunrise within seconds. The example config
-in this repo does no device-side painting, so nothing is needed there.
+**`Status LED` is what makes this work.** The firmware paints the LED itself —
+green awake, a red-to-green ramp while charging, amber for Bedtime, orange for a
+low battery — and re-asserts it every 10 seconds. Turning that switch off hands
+the light to Home Assistant entirely and stops the device competing for it;
+turning it back on at the end restores the status colours. Skip the first step
+and your sunrise lasts about ten seconds.
 
 **Waking a box that has genuinely slept is a different problem** and this does
 not solve it. That needs `esp_sleep_enable_timer_wakeup` in the firmware
