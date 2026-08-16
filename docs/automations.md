@@ -133,13 +133,41 @@ lis3dh:
     on_click:
       - homeassistant.event:
           event: esphome.tonie_tap
-          # Bit 3 of CLICK_SRC is the sign bit: which side of the axis was
-          # struck. That is what separates "tap the left" from "tap the right".
-          variables:
-            side: !lambda 'return std::string((src & 0x08) ? "neg" : "pos");'
-          data_template:
-            side: "{{ side }}"
+          # data:, NOT variables:. See "Why data: and not variables:" below —
+          # getting this wrong produces an event that fires but carries nothing.
+          data:
+            # Which axis was struck. One physical tap trips two or three of
+            # them, so if you act on the axis you must pick one.
+            axis: !lambda |-
+              if (src & 0x01) return "x";
+              if (src & 0x02) return "y";
+              return "z";
+            # Bit 3 of CLICK_SRC is the sign bit: which side of the axis was
+            # struck. That is what separates "tap the left" from "tap the right".
+            side: !lambda 'return (src & 0x08) ? "neg" : "pos";'
 ```
+
+### Why `data:` and not `variables:`
+
+`homeassistant.event` takes three maps and only two of them reach Home
+Assistant:
+
+| Key | What it does |
+|---|---|
+| `data:` | Copied verbatim into the event data. Values are templatable, so a lambda is evaluated on the device. |
+| `data_template:` | Rendered by Home Assistant as Jinja, with `variables` as the context, then merged into the event data. |
+| `variables:` | **Render context for `data_template` and nothing else.** Never reaches the event on its own. |
+
+Home Assistant's `esphome/manager.py` starts from `service_data = service.data`
+and only consults `variables` while rendering `data_template`. An event sent
+with `variables:` and no `data_template:` therefore arrives carrying `device_id`
+and nothing else — and it arrives *successfully*, so the box logs a tap, the
+event listener shows the event, and every template reading `trigger.event.data`
+silently sees an undefined value. Either `data:` with lambdas (above) or
+`variables:` paired with a matching `data_template:` works; `variables:` alone
+never does.
+
+### The automation
 
 Home Assistant's ESPHome integration adds `device_id` to every `esphome.*`
 event, so the same resolve-the-box trick works here:
@@ -171,13 +199,29 @@ actions:
           entity_id: "{{ box }}_2"
 ```
 
-Two things to settle before this is usable:
+Three things to settle before this is usable:
 
+- **Verify the event carries `side` before blaming the thresholds.** Open
+  Developer Tools → Events, listen for `esphome.tonie_tap`, and tap the box. You
+  want to see `axis` and `side` alongside `device_id`. If only `device_id` is
+  there, the firmware is sending `variables:` — see above. An event that arrives
+  empty still runs this automation, and because the `choose` condition is then
+  false it takes the `default:` branch, so **every tap skips backwards**. That
+  looks like a direction bug and is not one.
 - **The threshold is per box.** Set it with `threshold:` under `click:` and
   watch the ESPHome log, which prints every `CLICK_SRC` it sees at DEBUG.
 - **One physical tap usually trips two or three axes**, ~100–230 ms apart, so
-  this automation will skip two or three tracks unless you debounce it. Add
-  `mode: single` with a short `delay` at the end, or gate on one axis.
+  the box fires two or three events per tap. Debounce on the device rather than
+  in Home Assistant — a `globals:` `uint32_t last_tap_ms` and a condition of
+  `(millis() - id(last_tap_ms)) > 400` around the whole `on_click` body costs
+  nothing and keeps the automation stateless. Gating on one axis does not work:
+  which axis faces sideways depends on how the box is sitting.
+
+If you also use tilt gestures, note that a tap fires *during* a tilt
+(`CLICK_SRC=0x59` was measured mid-gesture), so the two will trip each other.
+Gate `on_click` on the box being upright — with the LIS3DH mounted as it is in
+this hardware, that is X ≈ −0.97 G at rest and `Y + Z` ≈ 0, against `Y + Z` ≈
+±1.1 while tilted.
 
 ---
 
