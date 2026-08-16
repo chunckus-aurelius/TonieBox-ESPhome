@@ -1,18 +1,34 @@
 # TonieBox ESPHome
 
-ESPHome components and a reference configuration for running a **Toniebox
-ESP32-S3 board (rev v1.6.C)** as a Home Assistant media player, with its NFC
-reader, audio codec, accelerometer, buttons and RGB LED all exposed as
-entities.
+**Custom firmware that turns a Toniebox into a Home Assistant speaker. No cloud,
+no account, no app.**
 
-This replaces the stock firmware entirely. It does not talk to the Boxine
-cloud and does not read or write Tonie content — it reports the tag UID to
-Home Assistant and lets you decide what that means.
+Put a figure on the box and it tells Home Assistant which one. What happens next
+is entirely yours to decide — a playlist, an audiobook, the radio, a bedtime
+routine, a light that comes on in another room. The Boxine cloud is never
+contacted, and nothing here stops working if it goes away.
 
-> **Status:** working, but board-revision specific. The pin map comes from
-> rev v1.6.C. The `board:` key in the example config is a placeholder you
-> should confirm against your own module, and the two ADC sensors scale by
-> the rev v1.6.C resistor dividers — check yours if readings look wrong.
+The box still behaves like a Toniebox. Squeeze the ears for volume, tap the
+sides to change track, hold an ear to switch it off. It sleeps on its own and
+wakes when you press an ear or drop it on the charger.
+
+- **Any tag works.** Tonie figures, hotel key cards, library tags — any ISO 15693
+  tag becomes a trigger for anything Home Assistant can do.
+- **Play anything.** Your own audiobooks and music through Music Assistant, not
+  just purchased content.
+- **Everything is an entity.** NFC reader, accelerometer, battery percentage,
+  buttons, RGB LED and speaker, all first-class in Home Assistant.
+- **Pair two boxes** as left and right channels.
+- **OTA updates.** Solder once, then never open the box again.
+
+**What it takes:** opening the shell, soldering three wires for a one-time
+serial flash, and the ESPHome + Home Assistant setup you probably already run.
+The [flashing guide](docs/flashing-guide.md) walks through it with photos.
+
+> **Board revision.** The pin map and the two ADC divider ratios come from a rev
+> v1.6.C board — silkscreen `TONIEBOX-ESP32 1.6.C`. Other ESP32-S3 Tonieboxes
+> are likely close but unverified, so confirm the `board:` key against your own
+> module and check the voltage readings look sane.
 
 ## Components
 
@@ -109,8 +125,9 @@ misapplied setting shows up in the boot log rather than as silence.
 
 ## Stock Toniebox vs this firmware
 
-Stock behaviour is taken from the official tonies manual. Status is what runs
-on hardware today, not what is planned.
+Every function in the official tonies manual, and whether it works here.
+Status is what runs on hardware today, not what is planned — nothing below is
+marked working because it ought to be.
 
 **Legend:** ✅ working · 🟡 partial · ⬜ not started · ⛔ deliberately out of scope
 
@@ -175,7 +192,7 @@ anything proven only on the author's boxes called out as such.
 | Gestures as HA events | 🟡 | Proven on hardware — `esphome.tonie_tap` carries `axis` and `side` — but the `click:` block is not enabled in the example config, since the threshold needs tuning per box. See the [automations guide](docs/automations.md) |
 | Configurable idle timeout | ✅ | `Sleep Timeout` in minutes, 0 to disable. Stock is a fixed 10 minutes with no way to change it |
 | Volume ceiling | ✅ | `Max Volume` clamps every path — ears, Home Assistant, Music Assistant. Stock has no cap |
-| The LED as an HA light | ✅ | Turning `Status LED` off hands the light to Home Assistant entirely, so any automation can paint it |
+| The LED as an HA light | ✅ | A plain RGB light entity — any automation can paint it any colour. The example config does no device-side painting at all, so nothing competes for it |
 | Test tone | ✅ | A button that proves I2S → DAC → amp → speaker with no network involved. Worth keeping during bring-up |
 | Headphone detect | 🟡 | Exposed as a binary sensor on GPIO48. Nothing acts on it and the polarity has not been verified |
 | Timer wake from deep sleep | ⬜ | A sleeping box can only be woken by a wake pin. Waking on a schedule would need `esp_sleep_enable_timer_wakeup` alongside the wake mask |
