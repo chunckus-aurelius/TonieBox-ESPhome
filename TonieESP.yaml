@@ -227,7 +227,11 @@ media_player:
       format: MP3
       sample_rate: 44100
       num_channels: 1
-    # Playback counts as activity, so the box never sleeps mid-track.
+    # KNOWN BUG: this does not keep the box awake through a long track.
+    # on_state fires when the player publishes state -- play, pause, volume --
+    # not continuously, so a track that publishes nothing for Sleep Timeout
+    # minutes lets the box sleep under the listener. Raise Sleep Timeout or set
+    # it to 0 until this is fixed properly.
     on_state:
       - script.execute: idle_timer
       - script.execute: clamp_volume

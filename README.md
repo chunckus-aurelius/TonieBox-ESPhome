@@ -96,8 +96,13 @@ knowing before wiring it to anything:
   otherwise, a tap transient falls between samples and nothing fires. This costs
   a little more current, which matters on battery.
 - A single physical tap usually trips **two or three axes** ~100–230 ms apart.
-  Debounce in your automation or in `on_click`, or a tap-to-skip will skip
-  twice.
+  Debounce inside `on_click` rather than in your automation — a `globals:`
+  `uint32_t` holding the last `millis()` and a 400 ms gate is enough. Gating on
+  a single axis instead does not work: which axis faces sideways depends on how
+  the box is sitting.
+- If you also use tilt gestures, note that a tap fires *during* a tilt, so the
+  two trip each other unless `on_click` is gated on the box being upright. The
+  [automations guide](docs/automations.md) has the measured orientation figures.
 
 The click registers are read back off the chip after they are written, so a
 misapplied setting shows up in the boot log rather than as silence.
@@ -183,6 +188,12 @@ load-bearing ones:
   `on_boot` lambda and nowhere else.
 - **The media player sample rates must match the I2S speaker's.** All three
   are 44100 in the example for a reason.
+- **The idle timeout can fire mid-track.** `Sleep Timeout` ships at 5 minutes
+  and is re-armed from `media_player`'s `on_state`, which fires on state
+  *publishes* rather than continuously — so a long track that publishes nothing
+  for five minutes lets the box sleep while someone is listening. Observed on
+  hardware 2026-08-15. Raise `Sleep Timeout` or set it to 0 until this is
+  fixed; the honest fix is to poll playback as activity.
 
 ## Attribution
 
