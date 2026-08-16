@@ -121,7 +121,7 @@ on hardware today, not what is planned.
 | Play a Tonie | Place figure on top, audio starts | ✅ | Tag UID goes to Home Assistant as `tag_scanned`; HA/Music Assistant decides what plays |
 | Pause on removal | Lift the figure, playback pauses | 🟡 | The box reports removal; pausing is a Home Assistant automation — see the [automations guide](docs/automations.md). Removal is debounced 1.5 s in `trf7962a`, so a knocked figure does not trigger it |
 | Resume position | Replacing the same figure resumes where it stopped, unless another was played in between | ⬜ | Stock keys this on last-played tag, not a timer |
-| Skip chapter | Tap either side of the box | 🟡 | `lis3dh` supports it — set `click:` and bind `on_click`. Proven on hardware, but **not enabled in the example config**, since the threshold needs tuning per box. GPIO14/INT1 is not used: CLICK_SRC is polled instead |
+| Skip chapter / change track | Tap either side of the box | 🟡 | `lis3dh` supports it — set `click:` and bind `on_click`. Proven end to end on hardware, driving next/previous track against a Music Assistant queue, but **not enabled in the example config**, since the threshold needs tuning per box. Left reports `side: pos`, right `side: neg` — see the [automations guide](docs/automations.md). GPIO14/INT1 is not used: CLICK_SRC is polled instead |
 | Fast-forward / rewind | Tilt the box to one side | ⬜ | Separate gesture from the tap; direction is user-configurable in stock |
 | Volume | Squeeze big ear up, small ear down | ✅ | Short press, 50–800 ms. A `Max Volume` number caps every path — ears, Home Assistant, Music Assistant. Defaults to 70% |
 
@@ -129,11 +129,11 @@ on hardware today, not what is planned.
 
 | Stock function | Stock behaviour | Here | Notes |
 |---|---|---|---|
-| Turn on — ear | Press an ear | 🟡 | Big ear only. `ext0` takes a single wake pin; covering both ears plus the charger needs `ext1` |
-| Turn on — charger | Place on the charging station | ⬜ | Same `ext1` work. GPIO7 sits low while charging, so the mask must be built at sleep time or the box can never sleep on the charger |
+| Turn on — ear | Press an ear | 🟡 | **Both ears proven on hardware** with an `ext1` mask, including the ears still reading correctly after a wake — but the example config here still ships `ext0`, which takes a single wake pin, so out of the box it is big ear only |
+| Turn on — charger | Place on the charging station | 🟡 | Same `ext1` work, also proven on hardware. Not in the example config. GPIO7 sits low while charging, so the mask must be built at sleep time — armed off the charger, excluded while docked — or the box can never sleep on the charger |
 | Idle power off | Automatic after 10 minutes | ✅ | Deep sleep with a configurable `Sleep Timeout` in minutes. **Defaults to 5 minutes**; set it to 0 to disable sleep entirely |
 | Manual power off | — | ✅ | Hold either ear 1–12 s, or the Power switch in Home Assistant |
-| Restart | Upside down + both ears ~10 s, off the charger | ⬜ | All three inputs are already available |
+| Restart | Upside down + both ears ~10 s, off the charger | ⬜ | All three inputs are already available. Upside down is a steady-state check on the vertical axis rather than a gesture, which makes it far more robust than tap detection. If you build it, gate the ears' power-off hold on *not* being upside down, or an aborted attempt releases straight into a power toggle |
 | Factory reset | Upside down + both ears ~10 s, on the charger | ⛔ | Not implemented on purpose — there is no cloud state to reset, and it shares a gesture with restart |
 
 ### Indicators
@@ -158,16 +158,28 @@ on hardware today, not what is planned.
 
 ### Beyond stock
 
-Things this firmware does that no Toniebox does:
+Things this firmware does that no Toniebox does. Same legend as above, and the
+same rule: status is what the example config in this repo gives you, with
+anything proven only on the author's boxes called out as such.
 
-- **Home Assistant native integration** — every sensor, the LED and the media player as first-class entities
-- **Music Assistant** — stream anything, not just Tonies; L/R channel split across two boxes via a Universal Group
-- **OTA updates** over Wi-Fi
-- **Battery and charge-rail voltage** as real numbers, not a colour, plus a
-  `Battery` percentage estimated from the pack curve
-- **Accelerometer readout** on all three axes, and hardware tap detection
-- **NFC UID** exposed to HA, so any ISO 15693 tag can trigger any automation
-- **Test tone** button that proves I2S → DAC → amp → speaker with no network involved
+| Feature | Here | Notes |
+|---|---|---|
+| Home Assistant native integration | ✅ | Every sensor, the LED and the media player as first-class entities. No cloud, no account, no app |
+| Play anything, not just Tonies | ✅ | Music Assistant streams any source. A figure becomes a trigger for an arbitrary automation rather than a fixed piece of content |
+| Any ISO 15693 tag works | ✅ | The UID goes to HA as `tag_scanned`, so a hotel key card or a library tag drives playback exactly as a Tonie figure does |
+| Stereo pair across two boxes | 🟡 | `output_channels` per player in Music Assistant splits L/R. Works, but the two boxes drift — they run on independent crystals and a Universal Group carries no clock |
+| OTA updates | ✅ | Over Wi-Fi, no disassembly |
+| Battery percentage | ✅ | Estimated from the pack curve, verified on hardware at 4.04 V and 3.96 V. Stock shows a three-level indicator |
+| Raw pack and charge-rail voltages | ✅ | Real numbers rather than a colour, so charging can be watched rather than guessed at |
+| Accelerometer readout | ✅ | All three axes as HA sensors, plus hardware tap detection on the LIS3DH |
+| Gestures as HA events | 🟡 | Proven on hardware — `esphome.tonie_tap` carries `axis` and `side` — but the `click:` block is not enabled in the example config, since the threshold needs tuning per box. See the [automations guide](docs/automations.md) |
+| Configurable idle timeout | ✅ | `Sleep Timeout` in minutes, 0 to disable. Stock is a fixed 10 minutes with no way to change it |
+| Volume ceiling | ✅ | `Max Volume` clamps every path — ears, Home Assistant, Music Assistant. Stock has no cap |
+| The LED as an HA light | ✅ | Turning `Status LED` off hands the light to Home Assistant entirely, so any automation can paint it |
+| Test tone | ✅ | A button that proves I2S → DAC → amp → speaker with no network involved. Worth keeping during bring-up |
+| Headphone detect | 🟡 | Exposed as a binary sensor on GPIO48. Nothing acts on it and the polarity has not been verified |
+| Timer wake from deep sleep | ⬜ | A sleeping box can only be woken by a wake pin. Waking on a schedule would need `esp_sleep_enable_timer_wakeup` alongside the wake mask |
+| TTS announcements over music | ⛔ | Unlikely to fit at 44.1 kHz on this hardware — there is no PSRAM, so every buffer is internal SRAM |
 
 ## Things that will bite you
 
