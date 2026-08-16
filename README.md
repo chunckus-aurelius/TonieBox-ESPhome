@@ -113,9 +113,10 @@ knowing before wiring it to anything:
   a little more current, which matters on battery.
 - A single physical tap usually trips **two or three axes** ~100–230 ms apart.
   Debounce inside `on_click` rather than in your automation — a `globals:`
-  `uint32_t` holding the last `millis()` and a 400 ms gate is enough. Gating on
-  a single axis instead does not work: which axis faces sideways depends on how
-  the box is sitting.
+  `uint32_t` holding the last `millis()` and a 400 ms gate is enough. Note the
+  debounce reports only the *first* axis to trip, which matters if you then
+  filter on axis in Home Assistant: see the
+  [automations guide](docs/automations.md) for both sides of that trade.
 - If you also use tilt gestures, note that a tap fires *during* a tilt, so the
   two trip each other unless `on_click` is gated on the box being upright. The
   [automations guide](docs/automations.md) has the measured orientation figures.
@@ -139,7 +140,7 @@ marked working because it ought to be.
 | Pause on removal | Lift the figure, playback pauses | 🟡 | The box reports removal; pausing is a Home Assistant automation — see the [automations guide](docs/automations.md). Removal is debounced 1.5 s in `trf7962a`, so a knocked figure does not trigger it |
 | Resume position | Replacing the same figure resumes where it stopped, unless another was played in between | ⬜ | Stock keys this on last-played tag, not a timer |
 | Skip chapter / change track | Tap either side of the box | 🟡 | `lis3dh` supports it — set `click:` and bind `on_click`. Proven end to end on hardware, driving next/previous track against a Music Assistant queue, but **not enabled in the example config**, since the threshold needs tuning per box. Left reports `side: pos`, right `side: neg` — see the [automations guide](docs/automations.md). GPIO14/INT1 is not used: CLICK_SRC is polled instead |
-| Fast-forward / rewind | Tilt the box to one side | ⬜ | Separate gesture from the tap; direction is user-configurable in stock |
+| Fast-forward / rewind | Tilt the box to one side | 🟡 | Proven on hardware, not in the example config. With the LIS3DH mounted as it is here the tilt signal is `Y + Z`, not either axis alone — the part sits rotated ~45°, so the two move together. Measured +0.84 tilted one way and −0.73 the other against ~0 upright, which leaves plenty of room for a ±0.40 threshold |
 | Volume | Squeeze big ear up, small ear down | ✅ | Short press, 50–800 ms. A `Max Volume` number caps every path — ears, Home Assistant, Music Assistant. Defaults to 70% |
 
 ### Power
@@ -150,7 +151,7 @@ marked working because it ought to be.
 | Turn on — charger | Place on the charging station | 🟡 | Same `ext1` work, also proven on hardware. Not in the example config. GPIO7 sits low while charging, so the mask must be built at sleep time — armed off the charger, excluded while docked — or the box can never sleep on the charger |
 | Idle power off | Automatic after 10 minutes | ✅ | Deep sleep with a configurable `Sleep Timeout` in minutes. **Defaults to 5 minutes**; set it to 0 to disable sleep entirely |
 | Manual power off | — | ✅ | Hold either ear 1–12 s, or the Power switch in Home Assistant |
-| Restart | Upside down + both ears ~10 s, off the charger | ⬜ | All three inputs are already available. Upside down is a steady-state check on the vertical axis rather than a gesture, which makes it far more robust than tap detection. If you build it, gate the ears' power-off hold on *not* being upside down, or an aborted attempt releases straight into a power toggle |
+| Restart | Upside down + both ears ~10 s, off the charger | 🟡 | Proven on hardware, not in the example config. Upside down is a steady-state check on the vertical axis rather than a gesture, which makes it far more robust than tap detection. Three things worth copying if you build it: allow for the box being **held** — X reads 0.79 to 1.26 inverted in the hand, so a tight threshold resets the counter on hand shake; gate the ears' power-off hold on *not* being upside down, or an aborted attempt releases straight into a power toggle; and blink the LED before rebooting, because the reboot takes ~5 s and is otherwise completely silent |
 | Factory reset | Upside down + both ears ~10 s, on the charger | ⛔ | Not implemented on purpose — there is no cloud state to reset, and it shares a gesture with restart |
 
 ### Indicators

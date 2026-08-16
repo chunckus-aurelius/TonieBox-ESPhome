@@ -179,7 +179,13 @@ max: 10
 triggers:
   - trigger: event
     event_type: esphome.tonie_tap
-conditions: []
+conditions:
+  # Side taps land on y. Without this, any knock hard enough to trip the click
+  # detector on an upright box skips in whichever direction that axis's sign
+  # bit happens to carry — setting a box down on a table was measured doing
+  # exactly that. See "Things that are easy to get wrong" below.
+  - condition: template
+    value_template: "{{ trigger.event.data.axis == 'y' }}"
 actions:
   - variables:
       box: >
@@ -223,14 +229,19 @@ working around.
   in Home Assistant — a `globals:` `uint32_t last_tap_ms` and a condition of
   `(millis() - id(last_tap_ms)) > 400` around the whole `on_click` body costs
   nothing and keeps the automation stateless.
-- **Think twice before filtering on `axis`.** With the upright gate below in
-  place a left/right tap lands on `y`, so `trigger.event.data.axis == 'y'` will
-  reject a knock on the top or front that would otherwise skip in an arbitrary
-  direction. The catch is the debounce above: only the *first* axis to trip is
-  reported, and if a side tap happens to register on `x` first, that condition
-  silently drops a legitimate tap. The symptom is specific and worth knowing —
-  the device log prints `tap: CLICK_SRC=0x..` and nothing skips. Decide which
-  failure you would rather have.
+- **Filter on `axis`.** With the upright gate below in place, a left/right tap
+  lands on `y`, so add `trigger.event.data.axis == 'y'` as a condition. Without
+  it, any knock hard enough to trip the click detector while the box is sitting
+  upright fires a skip in whichever direction that axis's sign bit happens to
+  carry. Observed on hardware: setting a box down on a table produced
+  `CLICK_SRC=0x5C` — Z, negative — which passed the upright gate cleanly and
+  would have skipped a track.
+  There is a cost, and it is worth knowing. Only the *first* axis to trip is
+  reported, because of the debounce above, so a side tap that happens to
+  register on `x` first is dropped. That failure is quiet and specific: the
+  device log prints `tap: CLICK_SRC=0x..` and nothing skips. In practice
+  deliberate side taps land on `y` and stray knocks do not, so the filter wins
+  — but if taps start feeling unreliable, this is the first thing to remove.
 
 If you also use tilt gestures, note that a tap fires *during* a tilt
 (`CLICK_SRC=0x59` was measured mid-gesture), so the two will trip each other.
