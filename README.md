@@ -151,7 +151,7 @@ on hardware today, not what is planned.
 | Feature | Here | Notes |
 |---|---|---|
 | Sleep timer with light | ⬜ | Reachable — RGB LED plus the media player |
-| Sunrise alarm | ⬜ | Reachable, but a sleeping box cannot be woken by Home Assistant; needs the box awake or an RTC timer wake source |
+| Sunrise alarm | 🟡 | **No firmware needed** — the LED is an ordinary HA light, so the alarm is one automation, written up in the [automations guide](docs/automations.md). The box must be awake when it fires, so set `Sleep Timeout` to 0 and leave it on its charger. Waking a box that genuinely slept is the separate problem, and needs a timer wake source |
 | Bluetooth headphones | ⛔ | No Bluetooth audio path on this hardware |
 | USB-C charging | ⛔ | Hardware |
 | Tonieplay games | ⛔ | Proprietary content |

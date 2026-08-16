@@ -240,6 +240,84 @@ this hardware, that is X ≈ −0.97 G at rest and `Y + Z` ≈ 0, against `Y + Z
 
 ---
 
+## Sunrise alarm
+
+A Toniebox 2 feature, and one that needs no firmware at all — the LED is an
+ordinary Home Assistant light, so a schedule, a transition and a `play_media`
+call are the whole thing.
+
+**The catch is that the box has to be awake when the alarm fires.** Deep sleep
+means no API, and a wake pin cannot be a clock, so an automation aimed at a
+sleeping box does nothing and reports no error. Set `Sleep Timeout` to 0 on the
+box that acts as the alarm clock and leave it on its charger overnight. Nothing
+below works around this; it is the one thing to get right.
+
+```yaml
+alias: Tonie — sunrise alarm
+mode: single
+triggers:
+  - trigger: time
+    at: "07:00:00"
+conditions:
+  # Weekdays only. Drop this if you want it every day.
+  - condition: time
+    weekday: [mon, tue, wed, thu, fri]
+  # A box that slept anyway cannot be woken from here, and painting its light
+  # would fail silently. Better to skip the alarm than to half-run it.
+  - condition: template
+    value_template: "{{ states('light.tonie_the_example_led') != 'unavailable' }}"
+actions:
+  # Start dim, at the bottom of what is actually visible — see below.
+  - action: light.turn_on
+    target:
+      entity_id: light.tonie_the_example_led
+    data:
+      brightness_pct: 60
+      rgb_color: [255, 120, 20]     # warm amber
+  # Ramp to full daylight over twenty minutes.
+  - action: light.turn_on
+    target:
+      entity_id: light.tonie_the_example_led
+    data:
+      brightness_pct: 100
+      rgb_color: [255, 200, 120]
+      transition: 1200
+  # Audio after the light has been climbing a while, not at the same instant.
+  - delay:
+      minutes: 15
+  - action: media_player.volume_set
+    target:
+      entity_id: media_player.tonie_the_example_speaker
+    data:
+      volume_level: 0.2
+  - action: music_assistant.play_media
+    target:
+      entity_id: media_player.tonie_the_example_speaker_2
+    data:
+      media_id: "Morning Playlist"
+      media_type: playlist
+```
+
+**Start the ramp at 60%, not at 0.** Below roughly 60% brightness this LED is
+not visible through the plastic shell — 25% measures as indistinguishable from
+off. A ramp from zero is therefore invisible for most of its length: a
+twenty-minute climb from 0 would show nothing at all until about minute twelve,
+then appear to snap on. The usable range is the top of the scale, so ramp within
+it.
+
+**If your config paints the LED on the device**, as the sibling configs behind
+this repo do, add a switch that suppresses that painting and turn it off at the
+start of the automation, then back on at the end — otherwise a device-side
+status colour will repaint over the sunrise within seconds. The example config
+in this repo does no device-side painting, so nothing is needed there.
+
+**Waking a box that has genuinely slept is a different problem** and this does
+not solve it. That needs `esp_sleep_enable_timer_wakeup` in the firmware
+alongside the existing wake mask, so the box brings itself up on a schedule
+rather than being reached over the network.
+
+---
+
 ## Things worth knowing
 
 **A sleeping box is unreachable.** Deep sleep means no API, so any automation
