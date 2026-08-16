@@ -188,12 +188,12 @@ load-bearing ones:
   `on_boot` lambda and nowhere else.
 - **The media player sample rates must match the I2S speaker's.** All three
   are 44100 in the example for a reason.
-- **The idle timeout can fire mid-track.** `Sleep Timeout` ships at 5 minutes
-  and is re-armed from `media_player`'s `on_state`, which fires on state
-  *publishes* rather than continuously — so a long track that publishes nothing
-  for five minutes lets the box sleep while someone is listening. Observed on
-  hardware 2026-08-15. Raise `Sleep Timeout` or set it to 0 until this is
-  fixed; the honest fix is to poll playback as activity.
+- **The idle timeout will fire mid-track if you re-arm it only from
+  `on_state`.** That trigger fires on state *publishes* — play, pause, volume —
+  not continuously, so a long track that publishes nothing for `Sleep Timeout`
+  minutes lets the box sleep while someone is listening. Observed on hardware
+  2026-08-15. The example config now polls the player state on a 10 s interval
+  instead; keep that interval if you cut anything else out of the config.
 
 ## Attribution
 

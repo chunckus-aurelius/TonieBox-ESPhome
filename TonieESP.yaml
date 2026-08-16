@@ -227,11 +227,9 @@ media_player:
       format: MP3
       sample_rate: 44100
       num_channels: 1
-    # KNOWN BUG: this does not keep the box awake through a long track.
-    # on_state fires when the player publishes state -- play, pause, volume --
-    # not continuously, so a track that publishes nothing for Sleep Timeout
-    # minutes lets the box sleep under the listener. Raise Sleep Timeout or set
-    # it to 0 until this is fixed properly.
+    # Re-arms the idle timer instantly on play/pause/volume. It fires on state
+    # publishes rather than continuously, so it cannot hold the box awake
+    # through a long track by itself -- the 10s interval polls for that.
     on_state:
       - script.execute: idle_timer
       - script.execute: clamp_volume
@@ -463,6 +461,22 @@ interval:
               return fabsf(sqrtf(x * x + y * y + z * z) - 1.0f) > 0.15f;
           then:
             - script.execute: movement_led
+            - script.execute: idle_timer
+
+  # Playback keeps the box awake. The media player's on_state re-arms the idle
+  # timer the instant someone hits play, but it fires when the player publishes
+  # rather than continuously, so it cannot hold the box through a long track --
+  # polled here instead. ANNOUNCING counts: a TTS announcement is the case most
+  # likely to be the only thing playing.
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              auto s = id(toniebox_media_player).state;
+              return s == media_player::MEDIA_PLAYER_STATE_PLAYING ||
+                     s == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
+          then:
             - script.execute: idle_timer
 
 # Soft power. ALWAYS_ON, never RESTORE_*: a persisted OFF would fire
