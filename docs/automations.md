@@ -254,6 +254,120 @@ this hardware, that is X ≈ −0.97 G at rest and `Y + Z` ≈ 0, against `Y + Z
 
 ---
 
+## Tilt to seek
+
+The example config already does this too — it fires `esphome.tonie_tilt` while
+the box is held leaning to one side, repeating every 600 ms so Home Assistant
+can seek in steps for as long as the tilt lasts. The firmware never seeks
+anything itself; it has no idea what is playing.
+
+**Left is `side: pos`. Right is `side: neg`** — the same mapping as the tap
+event, measured on the same hardware on 2026-08-16 (`Y + Z` came out at +0.84
+leaning left and −0.73 leaning right, against ~0 upright). Mapping right to
+forward therefore keeps both gestures consistent: right skips forward, right
+fast-forwards.
+
+Three things the firmware does before an event ever reaches you, worth knowing
+because each one is a reason you might see *nothing*:
+
+- **The box must be roughly upright.** Tilt is a lean, not a roll — the gesture
+  is rejected below X ≈ −0.30 G, so turning the box over for the restart
+  gesture does not spray seek events at Home Assistant on the way.
+- **It disarms after ~30 s of continuous tilt** and will not re-arm until it
+  has seen the box upright again. A box knocked over behind a sofa stops
+  talking rather than seeking forever.
+- **It arms only after being seen upright.** A box put away on its side is
+  silent until someone stands it up.
+
+### The automation
+
+```yaml
+alias: Tonie — tilt to seek
+# queued, not parallel: two runs computing from the same position attribute
+# would both seek to the same place and one step would be lost.
+mode: queued
+max: 5
+triggers:
+  - trigger: event
+    event_type: esphome.tonie_tilt
+conditions: []
+actions:
+  - variables:
+      box: >
+        {{ device_entities(trigger.event.data.device_id)
+           | select('match', 'media_player\.') | first }}
+      # Seconds per event. Events repeat every 600 ms, so 10 here seeks at
+      # roughly 16x. Raise it for audiobooks, lower it for short tracks.
+      step: 10
+      # neg = right = forward, matching tap-to-skip.
+      delta: "{{ step if trigger.event.data.side == 'neg' else -step }}"
+      # media_position is a SNAPSHOT, not a live counter -- see below. Without
+      # the elapsed-time correction every seek jumps backwards to wherever the
+      # player last published.
+      current: >
+        {{ (state_attr(box ~ '_2', 'media_position') | float(0))
+           + (now() - (state_attr(box ~ '_2', 'media_position_updated_at')
+                       or now())).total_seconds() }}
+      duration: "{{ state_attr(box ~ '_2', 'media_duration') | float(0) }}"
+  # Nothing playing, or a stream with no duration: seeking is meaningless and
+  # media_seek on some players errors rather than ignoring it.
+  - condition: template
+    value_template: "{{ duration > 0 }}"
+  - action: media_player.media_seek
+    target:
+      entity_id: "{{ box }}_2"
+    data:
+      # Clamped. Seeking past the end is not a skip -- it is an error on some
+      # players and a stall on others.
+      seek_position: "{{ [[current + delta, 0] | max, duration - 1] | min }}"
+```
+
+### `media_position` is a snapshot, and this is the bug you will hit
+
+Home Assistant does not tick `media_position` forward. It stores whatever the
+player last reported, alongside `media_position_updated_at`, and expects you to
+add the elapsed time yourself. Read the attribute raw and every tilt event
+computes from the last published position, so a hold that should walk forward
+instead lands on the same spot repeatedly — or jumps *backwards* to a position
+that is thirty seconds stale.
+
+The `current` template above is the fix and it is not optional.
+
+### If the seek stalls part-way through a hold
+
+The failure looks like this: the first event or two move, then the rest of the
+hold does nothing. That is the same staleness from the other side — Music
+Assistant has not republished its position yet, so `media_position_updated_at`
+still points before the last seek and the correction re-derives the position
+you already left.
+
+Two knobs, in the order worth trying:
+
+1. **Raise `step`.** A larger jump per event means fewer events are needed, and
+   each one has longer to settle before it matters.
+2. **Throttle the automation.** Add `- delay: milliseconds: 700` as the last
+   action with `mode: single` and `max_exceeded: silent`. That drops the
+   intermediate events and gives the player a full cycle to republish between
+   seeks. Seeking gets coarser; it stops stalling.
+
+Do not try to fix this by tracking the target position in an `input_number`.
+It works, and then it drifts out of step with the player the first time
+something else seeks, and now you have two sources of truth for one position.
+
+### Worth knowing before you tune it
+
+- **Every tilt event re-arms the box's idle timer**, so a long fast-forward
+  cannot let the box fall asleep underneath you.
+- **A tap fires during a tilt** — `CLICK_SRC=0x59` was measured mid-gesture.
+  The firmware's upright gate on `on_click` is what stops one movement
+  triggering both a seek and a skip. If you built your config from scratch and
+  left that gate out, this is where it shows up.
+- **Which side is forward is a choice, not a spec.** The repo has never
+  established which way a stock box fast-forwards. If right-for-forward feels
+  wrong in the hand, swap the sign on `delta` and change nothing else.
+
+---
+
 ## Sunrise alarm
 
 A Toniebox 2 feature, and one that needs no firmware at all — the LED is an

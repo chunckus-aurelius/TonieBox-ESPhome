@@ -911,9 +911,11 @@ interval:
           condition:
             lambda: 'return id(tilt_fire) != 0;'
           then:
-            # pos/neg, matching tonie_tap's `side`, NOT forward/back. Which
-            # physical direction is which was never established -- the 2026-08-12
-            # measurements recorded "one way" and "the other". HA decides.
+            # pos/neg, matching tonie_tap's `side`, NOT forward/back. Left is
+            # pos, right is neg -- measured 2026-08-16, Y+Z of +0.84 leaning
+            # left against -0.73 leaning right. Which one means forward is
+            # still HA's call; the guide maps neg to forward so that right
+            # fast-forwards and right skips forward.
             - homeassistant.event:
                 event: esphome.tonie_tilt
                 # data:, not variables: -- see the tap event above.
