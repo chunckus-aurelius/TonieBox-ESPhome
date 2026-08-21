@@ -72,6 +72,22 @@ esphome:
         # waiting on the API means the box shows awake during the boot silence,
         # which is the window that was getting the volume cranked.
         - script.execute: led_update
+        # Published once, here rather than from a sensor: the cause is latched
+        # by the ROM at wake and never changes while the box is up.
+        # ESP_SLEEP_WAKEUP_UNDEFINED is a genuine cold boot -- power-on, OTA or
+        # the restart gesture -- not a wake from sleep.
+        - lambda: |-
+            switch (esp_sleep_get_wakeup_cause()) {
+              case ESP_SLEEP_WAKEUP_EXT1:
+                id(last_wake_cause).publish_state("ear or charger");
+                break;
+              case ESP_SLEEP_WAKEUP_TIMER:
+                id(last_wake_cause).publish_state("wake timer");
+                break;
+              default:
+                id(last_wake_cause).publish_state("cold boot");
+                break;
+            }
 
 esp32:
   board: esp32-s3-devkitc-1  # placeholder -- confirm exact module for this board rev
@@ -184,6 +200,17 @@ text_sensor:
     name: "NFC Tag UID"
     icon: "mdi:nfc-variant"
     update_interval: never  # pushed from the triggers above
+
+  # Why the box last came up: an ear or the charger (ext1), the wake timer, or
+  # a genuine cold boot. Diagnostic only, but it is the only way to tell a
+  # timer wake from someone picking the box up, and it is what makes the RTC
+  # drift on a long alarm measurable at all.
+  - platform: template
+    id: last_wake_cause
+    name: "Last Wake Cause"
+    icon: "mdi:sleep-off"
+    entity_category: diagnostic
+    update_interval: never  # published once from on_boot
 
 # TEST TONE -- commented out, uncomment if you want it.
 #
@@ -378,6 +405,28 @@ light:
           transition_length: 1.5s
           update_interval: 1.5s
 
+# The wake alarm is the only thing that needs a clock. Home Assistant is that
+# clock -- there is no RTC on this board, and nothing keeps wall-clock time
+# through deep sleep -- so the alarm can only be worked out while HA is
+# connected. That costs nothing in practice: box_power_down is unreachable
+# until HA has connected once anyway, and that is the same code path.
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# A time, not a datetime: the alarm repeats daily and the next occurrence is
+# computed at the moment the box sleeps.
+datetime:
+  - platform: template
+    id: wake_alarm_time
+    name: "Wake Alarm Time"
+    icon: "mdi:alarm-check"
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "07:00:00"
+    entity_category: config
+
 # NO wakeup source is declared here on purpose. Both ears and the charger have
 # to wake the box, which needs ext1, and ext1 is mutually exclusive with
 # `wakeup_pin` (ext0). ESPHome's own `esp32_ext1_wakeup:` is no good either --
@@ -407,6 +456,24 @@ number:
     mode: box
     on_value:
       - script.execute: idle_timer
+
+  # Wake from deep sleep every N minutes. 0 -- the default -- means never, so
+  # this changes nothing on a box nobody has configured. Every wake is a full
+  # boot and a WiFi association, so it is not free; if what you actually want
+  # is "be awake at 07:00", use the Wake Alarm instead and leave this at 0.
+  - platform: template
+    id: wake_interval
+    name: "Wake Interval"
+    icon: "mdi:timer-sync-outline"
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 720
+    step: 5
+    unit_of_measurement: min
+    mode: box
+    entity_category: config
 
   # How long Bedtime plays before the box fades down and sleeps. Distinct from
   # Sleep Timeout above, which is the idle power-off and applies always.
@@ -807,6 +874,61 @@ script:
                       ESP_LOGD("sleep", "ext1 mask 0x%llX (charger %s)", mask,
                                (mask & (1ULL << 7)) ? "absent" : "docked");
                       esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+                  # Timer wake, armed on top of the ext1 mask above rather
+                  # than instead of it -- an ear or the charger still wakes the
+                  # box early. ESPHome calls esp_sleep_enable_timer_wakeup only
+                  # when deep_sleep: declares a sleep_duration, and it never
+                  # disables a wake source, so this survives deep_sleep.enter
+                  # for the same reason the hand-built ext1 mask does.
+                  - lambda: |-
+                      // Both sources default to off, so a box nobody has
+                      // configured sleeps exactly as it did before this
+                      // existed. Do not give either one a non-zero default.
+                      uint32_t secs = 0;
+                      const char *src = "none";
+
+                      if (id(wake_interval).state > 0.0f) {
+                        secs = (uint32_t)(id(wake_interval).state * 60.0f);
+                        src = "interval";
+                      }
+
+                      if (id(wake_alarm_enabled).state) {
+                        auto now = id(ha_time).now();
+                        if (now.is_valid()) {
+                          // Wall-clock seconds-of-day at both ends. A DST shift
+                          // during the sleep moves the alarm by an hour: there
+                          // is nothing to resync against once the box is down,
+                          // and twice a year is not worth the code.
+                          const int32_t now_s = now.hour * 3600 +
+                                                now.minute * 60 + now.second;
+                          const int32_t tgt_s = id(wake_alarm_time).hour * 3600 +
+                                                id(wake_alarm_time).minute * 60 +
+                                                id(wake_alarm_time).second;
+                          int32_t d = tgt_s - now_s;
+                          if (d <= 0) d += 86400;   // next occurrence
+                          // Come up early, so the box is associated and Home
+                          // Assistant has it back before the automation fires.
+                          // Sleep Timeout must be longer than this lead or the
+                          // box goes back down before the alarm time arrives.
+                          d -= 120;
+                          if (d < 60) d = 60;
+                          // Soonest wins, so setting both means "check in every
+                          // N minutes, and definitely be up for the alarm".
+                          if (secs == 0 || (uint32_t)d < secs) {
+                            secs = (uint32_t)d;
+                            src = "alarm";
+                          }
+                        } else {
+                          // Sleep anyway. Refusing would strand the box awake
+                          // on a battery, which is worse than a missed alarm.
+                          ESP_LOGW("sleep", "wake alarm on but HA time is not valid -- not armed");
+                        }
+                      }
+
+                      if (secs > 0) {
+                        ESP_LOGD("sleep", "timer wake in %us (%s)", (unsigned) secs, src);
+                        esp_sleep_enable_timer_wakeup((uint64_t) secs * 1000000ULL);
+                      }
                   # Belt and braces since KEEP_AWAKE went away: enter is manual
                   # and skips prevent_ anyway, and nothing re-enters from loop()
                   # now that no wakeup_pin or run_duration is declared.
@@ -1065,6 +1187,19 @@ switch:
     icon: "mdi:power-plug-battery"
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+
+  # Arms the Wake Alarm Time entity, which sits up beside deep_sleep: with
+  # the rest of the wake machinery. No actions on purpose, exactly like Stay
+  # Awake on Charger above: box_power_down reads the state on its way into
+  # sleep, so nothing fires from the restore at boot and a persisted ON cannot
+  # start anything. That is the trap box_power and Bedtime both document.
+  - platform: template
+    id: wake_alarm_enabled
+    name: "Wake Alarm"
+    icon: "mdi:alarm"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
 
 # Ear buttons are physical push-buttons, not capacitive touch.
 # Short press = volume, hold = soft power.

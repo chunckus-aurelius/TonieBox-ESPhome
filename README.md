@@ -170,7 +170,7 @@ marked working because it ought to be.
 | Feature | Here | Notes |
 |---|---|---|
 | Sleep timer with light | 🟡 | A `Bedtime` switch and a `Bedtime Timer` number. Runs alongside whatever is already playing — as the stock timer does — holds the LED warm amber, fades it over the final minute, then stops and sleeps. **In the config, not yet confirmed on hardware.** Note the fade leaves the visible band about nine seconds in: below ~60% this LED is not visible through the shell |
-| Sunrise alarm | 🟡 | **No firmware needed** — the LED is an ordinary HA light, so the alarm is one automation, written up in the [automations guide](docs/automations.md). The box must be awake when it fires, so leave it on its charger with `Stay Awake on Charger` on, or set `Sleep Timeout` to 0. Waking a box that genuinely slept is the separate problem, and needs a timer wake source |
+| Sunrise alarm | 🟡 | **No firmware needed** — the LED is an ordinary HA light, so the alarm is one automation, written up in the [automations guide](docs/automations.md). The box has to be awake when it fires: leave it on its charger with `Stay Awake on Charger` on, set `Sleep Timeout` to 0, or use the `Wake Alarm` below to have a genuinely sleeping box bring itself up first |
 | Bluetooth headphones | ⛔ | No Bluetooth audio path on this hardware |
 | USB-C charging | ⛔ | Hardware |
 | Tonieplay games | ⛔ | Proprietary content |
@@ -196,7 +196,7 @@ same rule: status is what the example config in this repo gives you.
 | The LED as an HA light | ✅ | An RGB light entity, and a `Status LED` switch that hands it to Home Assistant entirely — with that off, nothing on the device repaints over an automation's colour. That is what makes the sunrise alarm possible without firmware |
 | Test tone | ✅ | A button that proves I2S → DAC → amp → speaker with no network involved — the fastest way to tell a wiring or codec fault from a Music Assistant one. Ships commented out on purpose, since it is bring-up equipment rather than an everyday control: uncomment the `rtttl:` and `button:` blocks in `TonieESP.yaml` for a first flash on new hardware |
 | Headphone detect | 🟡 | Exposed as a binary sensor on GPIO48. Nothing acts on it and the polarity has not been verified |
-| Timer wake from deep sleep | ⬜ | A sleeping box can only be woken by a wake pin. Waking on a schedule would need `esp_sleep_enable_timer_wakeup` alongside the wake mask |
+| Timer wake from deep sleep | 🟡 | `box_power_down` arms `esp_sleep_enable_timer_wakeup` alongside the `ext1` mask, so a sleeping box can bring itself up. Two ways to set it, both dashboard entities and both off by default: a `Wake Interval` in minutes, and a `Wake Alarm` + `Wake Alarm Time` that wakes two minutes before a wall-clock time. **Written, never run** — and the open question is drift: the wake timer runs off the internal RC oscillator, so a long alarm may land minutes late. `Last Wake Cause` is the diagnostic that measures it |
 | TTS announcements over music | ⛔ | Unlikely to fit at 44.1 kHz on this hardware — there is no PSRAM, so every buffer is internal SRAM |
 
 ## Things that will bite you

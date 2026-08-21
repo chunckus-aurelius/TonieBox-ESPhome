@@ -452,10 +452,39 @@ the light to Home Assistant entirely and stops the device competing for it;
 turning it back on at the end restores the status colours. Skip the first step
 and your sunrise lasts about ten seconds.
 
-**Waking a box that has genuinely slept is a different problem** and this does
-not solve it. That needs `esp_sleep_enable_timer_wakeup` in the firmware
-alongside the existing wake mask, so the box brings itself up on a schedule
-rather than being reached over the network.
+### Waking a box that has genuinely slept
+
+Everything above assumes the box is awake at 07:00. If you would rather it slept
+all night and brought *itself* up, the example config has a wake timer for
+exactly this. Two entities, both off by default:
+
+- **`Wake Alarm`** (switch) and **`Wake Alarm Time`** — wakes at a wall-clock
+  time, every day. The box works out the next occurrence at the moment it goes
+  to sleep, and comes up **two minutes early** so it is associated and back in
+  Home Assistant before your automation fires.
+- **`Wake Interval`** (minutes, 0 = off) — wakes every N minutes regardless.
+  Useful for a periodic check-in, wasteful for an alarm.
+
+Set both and the sooner one wins.
+
+Two things to get right, and they are both silent when wrong:
+
+1. **`Sleep Timeout` must be longer than the two-minute lead**, or the box
+   comes up, times out, and goes back to sleep before the alarm time arrives.
+   The 5 min default is fine; 1 min is not.
+2. **The alarm is armed on the way into sleep, from Home Assistant's clock.**
+   There is no RTC on this board. A box that sleeps while Home Assistant is
+   unreachable logs `wake alarm on but HA time is not valid -- not armed` and
+   sleeps without an alarm — it does not refuse to sleep, because stranding a
+   battery box awake is worse than missing one morning.
+
+**Expect the alarm to be approximate.** The wake timer counts on the chip's
+internal RC oscillator, not a crystal, so a twelve-hour sleep can land
+noticeably off. Check the **`Last Wake Cause`** sensor — it reads `wake timer`,
+`ear or charger`, or `cold boot` — against the time Home Assistant saw the
+device come online, and if the drift is more than you can live with, set the
+alarm earlier rather than trying to correct it. Nothing on the box can measure
+its own lateness.
 
 ---
 
@@ -465,7 +494,8 @@ rather than being reached over the network.
 targeting a box that has slept will silently do nothing. This does not affect
 the automations above — they are all triggered *by* the box, which means it is
 awake and connected. It does affect anything Home Assistant initiates on a
-schedule.
+schedule — for which the answer is the wake timer, under the sunrise alarm
+above: the box has to bring itself up, because nothing can reach in and do it.
 
 **Volume is capped on the device.** The `Max Volume` number clamps every path,
 so `volume_set` above the ceiling is pulled back down. Raise the ceiling on the
