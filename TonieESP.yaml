@@ -122,9 +122,22 @@ logger:
   # ESPHome's own log too and not just ROM output.
   hardware_uart: UART0
   logs:
-    # Sensor states are ESP_LOGV per sensor per poll -- 30 lines/sec here.
-    sensor: INFO
+    # ~5/sec of published-state spam survives INFO (the delta filter cuts the
+    # raw 30/sec, not the state log). WARN silences the accel/battery/charge
+    # value lines; gestures read .state not the log, so they are unaffected.
+    # Raise back to INFO to watch live axis values.
+    sensor: WARN
     text_sensor: INFO
+    # idle_timer restarts every 10s and preferences flush every ~60s: DEBUG
+    # heartbeat with nothing to say. INFO hides them; the scripts we care about
+    # (bedtime, power down) announce themselves through sleep/deep_sleep logs.
+    script: INFO
+    preferences: INFO
+    # "No tag" polls every 10s at DEBUG. NOTE this shares its level with "Tag
+    # present"/"Tag removed", so INFO hides those too -- raise back to DEBUG
+    # when working on NFC. (Proper fix is demoting only "No tag" to VERBOSE in
+    # the trf7962a component; that is a public-repo change.)
+    trf7962a: INFO
 
 api:
   encryption:
