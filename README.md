@@ -199,6 +199,24 @@ same rule: status is what the example config in this repo gives you.
 | Timer wake from deep sleep | ✅ | `box_power_down` arms `esp_sleep_enable_timer_wakeup` alongside the `ext1` mask, so a sleeping box can bring itself up. Two ways to set it, both dashboard entities and both off by default: a `Wake Interval` in minutes, and a `Wake Alarm` + `Wake Alarm Time` that wakes two minutes before a wall-clock time. **Confirmed on hardware, both ways:** each armed and self-woke a battery-powered box from deep sleep, with `Last Wake Cause` reading `wake timer` on the way back up. The one open question is drift: the wake timer runs off the internal RC oscillator, so a long alarm may land minutes late — measured only over short hops so far. `Last Wake Cause` against Home Assistant's own timestamp is the diagnostic for it |
 | TTS announcements over music | ⛔ | Unlikely to fit at 44.1 kHz on this hardware — there is no PSRAM, so every buffer is internal SRAM |
 
+## 3D-printed parts
+
+Models of Toniebox shell parts are in [`docs/3d/`](docs/3d/):
+
+| File | Size (mm) | What it is |
+|------|-----------|------------|
+| `Toniebox Top Plate.3mf` | 94 × 94 × 12.5 | Bambu Studio project for the top plate, with multicolour set up to match the stock plates. Two build plates: the standard top plate, and one with room for the metal plate |
+| `Top Plate Single Color.stl` | 94 × 94 × 12.5 | The top plate for a single-colour print |
+| `Top Plate Single Color with Light Cutouts.stl` | 94 × 94 × 12.5 | As above, with light cutouts |
+| `Base Plate.stl` | 80.5 × 80.5 × 18.3 | The cap that closes the bottom of the box |
+
+Printed in PETG on a Bambu Lab X1 Carbon with a 0.4 mm nozzle, using Bambu's
+"0.20mm Strength" profile: 0.2 mm layers, 6 walls, 25 % infill, tree supports.
+The 3MF carries the full settings.
+
+The models are licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/),
+not GPLv3 like the rest of the repository.
+
 ## Things that will bite you
 
 The example config is heavily commented, and most of those comments exist
@@ -241,7 +259,7 @@ by section. Per-file attribution is in the header comment of each component.
 
 ## License
 
-[GPLv3](LICENSE).
+[GPLv3](LICENSE), except the 3D models in `docs/3d/`, which are [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
 ESPHome is dual-licensed — its C++/runtime code (`.c`, `.cpp`, `.h`, `.hpp`,
 `.tcc`, `.ino`) is GPLv3 and its Python code is MIT. The C++ in this
