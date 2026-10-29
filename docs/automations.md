@@ -5,6 +5,11 @@ reports **what happened** — a tag arrived, a tag left, an ear was squeezed, th
 box was tapped — and Home Assistant decides what that means. This keeps media
 library changes out of the firmware and off the flash cycle.
 
+The community [TonieESP](https://github.com/vitals5/tonieesp) integration
+covers the same ground from a sidebar panel. If you install it, leave out the
+figure, tap and tilt automations below, or every figure and gesture is acted on
+twice.
+
 All examples below use placeholder tag IDs (`E0040150XXXXXXXX`). Replace them
 with your own: place a figure on the box and read the **NFC Tag UID** sensor, or
 watch the ESPHome log for `tag_scanned`.

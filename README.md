@@ -85,6 +85,13 @@ mean. The [automations guide](docs/automations.md) has worked examples,
 including a single automation that serves every box you own by resolving which
 one a figure was placed on.
 
+If you would rather not write automations at all, the community
+[TonieESP](https://github.com/vitals5/tonieesp) integration (HACS) does the same
+job from a sidebar panel: a shared figure library, resume, and gesture mapping.
+It is a separate project, not maintained here. Run it **or** the guide's
+figure, tap and tilt automations, not both — with both, every figure starts
+playback twice and every gesture skips or seeks twice.
+
 ### Tap detection
 
 `lis3dh` can use the LIS3DH's hardware click detector. The example config
@@ -226,6 +233,14 @@ load-bearing ones:
 - **There is no PSRAM.** Every audio buffer has to fit in internal SRAM, and
   44.1 kHz playback only just does. Raising any `buffer_duration` or
   `buffer_size` tends to fail at runtime, not at compile time.
+- **Set the player to mono in Music Assistant.** Music Assistant treats every
+  new player as stereo, whatever the YAML says, and stereo doubles one of the
+  decode buffers. On this board that is enough to tip playback into
+  `i2s_alloc_dma_desc: allocate DMA buffer failed`. Set the player's output
+  channels to mono and restart Music Assistant. The tell is
+  `Decoded audio has 2 channels` in the log; a correctly set box says `1`.
+  Renaming the device makes it a new player again, so check this after any
+  rename.
 - **The `on_boot` sequence must stay a single lambda.** Splitting it into
   separate actions with `- delay:` between them does not work: `DelayAction`
   is asynchronous and returns immediately, so the I2C bus gets created
