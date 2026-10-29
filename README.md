@@ -92,6 +92,11 @@ It is a separate project, not maintained here. Run it **or** the guide's
 figure, tap and tilt automations, not both — with both, every figure starts
 playback twice and every gesture skips or seeks twice.
 
+**AirPlay needs a speaker group.** To stream to a box from an Apple device
+through Music Assistant, put the box in a Music Assistant speaker group and
+pick the group as the AirPlay target — even for a single box on its own. The
+box by itself does not work as an AirPlay target.
+
 ### Tap detection
 
 `lis3dh` can use the LIS3DH's hardware click detector. The example config
