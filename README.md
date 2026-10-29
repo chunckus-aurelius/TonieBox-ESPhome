@@ -263,6 +263,12 @@ load-bearing ones:
   2026-08-15. The example config now polls the player state on a 10 s interval
   instead; keep that interval if you cut anything else out of the config.
 
+## Contributing
+
+Issues and pull requests are welcome, whether that's a bug report, a fix, or a
+note on what worked or failed on your board revision. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for what to include.
+
 ## Attribution
 
 These are fresh ESPHome-native implementations, but the hardware knowledge
