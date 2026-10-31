@@ -163,7 +163,9 @@ api:
 
 ota:
   - platform: esphome
-    password: !secret ota_password
+    # Reuses the api: encryption key. Replaces the old password, which ESPHome
+    # warns wastes flash and RAM.
+    encryption:
 
 # Without this, playback starts fail with allocate DMA buffer failed. It only
 # undoes the TCP half; the WiFi half needs the sdkconfig_options above.
@@ -177,7 +179,10 @@ wifi:
 spi:
   id: toniebox_spi
   mosi_pin: GPIO2
-  miso_pin: GPIO3
+  miso_pin:
+    number: GPIO3
+    # Fixed by the board wiring; no pull resistors are added to it.
+    ignore_strapping_warning: true
   clk_pin: GPIO4
 
 i2c:

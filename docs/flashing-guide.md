@@ -125,9 +125,9 @@ Choose **Empty Configuration** and paste in [`TonieESP.yaml`](../TonieESP.yaml).
 ![Empty Configuration](images/22-create-config.png)
 *Choose Empty Configuration*
 
-The config reads four values with `!secret`, so define them in `secrets.yaml`
+The config reads three values with `!secret`, so define them in `secrets.yaml`
 before compiling or the build fails on the first one: `wifi_ssid`,
-`wifi_password`, `api_key` and `ota_password`. See [the README](../README.md#usage).
+`wifi_password` and `api_key`. See [the README](../README.md#usage).
 
 When prompted to match a board, pick **ESP32-S3 DevKitC-1**.
 
