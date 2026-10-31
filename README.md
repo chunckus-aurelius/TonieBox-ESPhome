@@ -238,14 +238,16 @@ load-bearing ones:
 - **There is no PSRAM.** Every audio buffer has to fit in internal SRAM, and
   44.1 kHz playback only just does. Raising any `buffer_duration` or
   `buffer_size` tends to fail at runtime, not at compile time.
-- **Set the player to mono in Music Assistant.** Music Assistant treats every
-  new player as stereo, whatever the YAML says, and stereo doubles one of the
-  decode buffers. On this board that is enough to tip playback into
-  `i2s_alloc_dma_desc: allocate DMA buffer failed`. Set the player's output
-  channels to mono and restart Music Assistant. The tell is
-  `Decoded audio has 2 channels` in the log; a correctly set box says `1`.
-  Renaming the device makes it a new player again, so check this after any
-  rename.
+- **Keep the `network:` block and the WiFi `sdkconfig_options`.** ESPHome's
+  media player switches on "high performance networking", which sizes the TCP
+  window and WiFi buffers for a board with PSRAM. On this board that leaves
+  too little memory to start a track, and playback fails with
+  `i2s_alloc_dma_desc: allocate DMA buffer failed`, often on a track change.
+  `network: enable_high_performance: false` only undoes the TCP half, so the
+  example also sets the WiFi buffers back to the ESP-IDF defaults. Together
+  they raise the largest free block during playback from around 10 KB to
+  46 KB or more. Thanks to [vitals5](https://github.com/vitals5) for the report
+  in [#1](https://github.com/chunckus-aurelius/TonieBox-ESPhome/issues/1).
 - **The `on_boot` sequence must stay a single lambda.** Splitting it into
   separate actions with `- delay:` between them does not work: `DelayAction`
   is asynchronous and returns immediately, so the I2C bus gets created
