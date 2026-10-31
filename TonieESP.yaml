@@ -33,6 +33,13 @@ esphome:
         # between them: DelayAction is async and returns immediately, so the
         # I2C bus would come up mid-sequence. This cost two days once.
         - lambda: |-
+            // Compile-time only. Fails the build if the WiFi sdkconfig_options
+            // stop overriding ESPHome's high-performance buffers.
+            static_assert(CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM == 10, "WiFi buffer override lost, see network: block");
+            static_assert(CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM == 32, "WiFi buffer override lost, see network: block");
+            static_assert(CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM == 32, "WiFi buffer override lost, see network: block");
+            static_assert(CONFIG_ESP_WIFI_RX_BA_WIN == 6, "WiFi buffer override lost, see network: block");
+
             // Release the pin holds left behind by deep sleep, or the pads
             // stay latched and the rails never come back.
             gpio_deep_sleep_hold_dis();
