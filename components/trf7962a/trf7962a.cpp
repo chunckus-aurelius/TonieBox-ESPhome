@@ -619,10 +619,13 @@ bool TRF7962AComponent::read_packet_(uint8_t *data, uint8_t *length, uint8_t exp
   // coupling; reading one extra register here ends that permanently. Read
   // after the drain loop, never during it, so it cannot steal Rx time.
   uint8_t rssi = this->read_register_(REG_RSSI_LEVELS);
+  // Stack buffer, not format_hex_pretty(): that heap-allocating helper is gone
+  // from ESPHome dev. format_hex_pretty_to truncates if a frame were ever longer.
+  char hex[format_hex_pretty_size(TRF7962A_RX_BUFFER_SIZE)];
 
   if (*length < 3) {
     ESP_LOGD(TAG, "Runt frame (%u bytes, IRQ 0x%02X, RSSI 0x%02X): %s", *length, this->irq_status_, rssi,
-             format_hex_pretty(data, *length).c_str());
+             format_hex_pretty_to(hex, data, *length));
     return false;
   }
 
@@ -631,8 +634,7 @@ bool TRF7962AComponent::read_packet_(uint8_t *data, uint8_t *length, uint8_t exp
   // this fires on every successful poll, which buries the log while a tag
   // sits on the box. The CRC-mismatch line below carries the RSSI for the
   // failure case, which is the one worth seeing at DEBUG.
-  ESP_LOGV(TAG, "frame (%u bytes, RSSI 0x%02X): %s", *length, rssi,
-           format_hex_pretty(data, *length).c_str());
+  ESP_LOGV(TAG, "frame (%u bytes, RSSI 0x%02X): %s", *length, rssi, format_hex_pretty_to(hex, data, *length));
 
   // VERIFY THE CRC. This is not optional hygiene -- it is the only thing
   // standing between a corrupted frame and a bogus tag UID. Without it,
