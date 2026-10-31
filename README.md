@@ -73,7 +73,21 @@ You will need a `secrets.yaml` alongside it defining:
 wifi_ssid: "..."
 wifi_password: "..."
 api_key: "..."       # base64 API encryption key
-ota_password: "..."
+```
+
+OTA updates are encrypted with the same `api_key`, so there is no separate OTA
+password. **Updating a box that was flashed with the older config, which used
+`ota_password`:** a box running ESPHome 2026.9 or later with an API key takes
+the new config straight away. If the install stops with "refusing to send the
+image in plaintext", nothing was flashed. Do that one install with this block,
+then remove the `password:` and `allow_plaintext_upload` lines again:
+
+```yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    encryption:
+      allow_plaintext_upload: true
 ```
 
 Getting it onto the hardware — opening the shell, soldering the UART bridge,
