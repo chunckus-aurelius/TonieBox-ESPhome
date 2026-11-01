@@ -127,7 +127,7 @@ external_components:
       type: git
       url: https://github.com/chunckus-aurelius/TonieBox-ESPhome
       ref: main
-    components: [trf7962a, dac3100, lis3dh]
+    components: [trf7962a, tlv320dac3100, lis3dh]
 
 logger:
   level: DEBUG
@@ -267,10 +267,14 @@ text_sensor:
 #     on_press:
 #       - rtttl.play: "two_short:d=4,o=5,b=100:16e6,16e6"
 
-dac3100:
-  id: audio_codec
-  i2c_id: toniebox_i2c
-  address: 0x18
+audio_dac:
+  - platform: tlv320dac3100
+    id: audio_codec
+    i2c_id: toniebox_i2c
+    address: 0x18
+    sample_rate: 44100  # must match the speaker below
+    output: SPEAKER
+    speaker_gain: 24dB
 
 # Topology: i2s speaker <- mixer <- per-source resampler <- media_player.
 # Sizes are memory-constrained, not arbitrary. There is no PSRAM on this
@@ -283,6 +287,7 @@ speaker:
     dac_type: external
     i2s_dout_pin: GPIO10  # I2S_DATA_GPIO
     sample_rate: 44100      # must match the pipelines below
+    audio_dac: audio_codec  # volume and mute in the codec
     buffer_duration: 100ms  # 150ms does not fit at this rate
 
   - platform: mixer
