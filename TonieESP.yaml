@@ -127,7 +127,7 @@ external_components:
       type: git
       url: https://github.com/chunckus-aurelius/TonieBox-ESPhome
       ref: main
-    components: [trf7962a, tlv320dac3100, lis3dh]
+    components: [trf7962a_nfc, tlv320dac3100, lis3dh]
 
 logger:
   level: DEBUG
@@ -146,11 +146,9 @@ logger:
     # (bedtime, power down) announce themselves through sleep/deep_sleep logs.
     script: INFO
     preferences: INFO
-    # "No tag" polls every 10s at DEBUG. NOTE this shares its level with "Tag
-    # present"/"Tag removed", so INFO hides those too -- raise back to DEBUG
-    # when working on NFC. (Proper fix is demoting only "No tag" to VERBOSE in
-    # the trf7962a component; that is a public-repo change.)
-    trf7962a: INFO
+    # DEBUG adds a "Scan:" line whenever a scan's result changes; INFO keeps
+    # only "Tag detected" / "Tag removed".
+    trf7962a_nfc: INFO
 
 api:
   encryption:
@@ -197,32 +195,23 @@ i2s_audio:
   i2s_lrclk_pin: GPIO12  # I2S_WS_GPIO
   i2s_bclk_pin: GPIO11   # I2S_BCK_GPIO
 
-trf7962a:
+trf7962a_nfc:
   id: nfc_reader
   spi_id: toniebox_spi
   cs_pin: GPIO1           # SPI_SS_GPIO
   irq_pin: GPIO13         # TRF7962A_IRQ_GPIO
   update_interval: 500ms
   # Reporting to Home Assistant is the ONLY thing a tag does on device.
-  # Tag automations live in HA.
-  on_tag_present:
+  # Tag automations live in HA. x is "E0-04-...", MSB first; HA tag IDs
+  # have no dashes, so strip them to keep the IDs the old driver sent.
+  on_tag:
     then:
-      # Guard is a condition, not an early `return`, so a short read cannot
-      # fire tag_scanned with a stale or empty tag_id and trip the wrong HA
-      # automation. `x` is std::vector<uint8_t>, so tag_scanned (which wants a
-      # std::string) reads the UID back off the sensor set immediately above.
-      - if:
-          condition:
-            lambda: 'return x.size() >= 8;'
-          then:
-            - lambda: |-
-                char buf[17];
-                for (int i = 0; i < 8; i++) {
-                  snprintf(&buf[i * 2], 3, "%02X", x[7 - i]);
-                }
-                id(nfc_tag_uid).publish_state(buf);
-            - homeassistant.tag_scanned: !lambda 'return id(nfc_tag_uid).state;'
-            - script.execute: idle_timer
+      - lambda: |-
+          std::string uid = x;
+          uid.erase(std::remove(uid.begin(), uid.end(), '-'), uid.end());
+          id(nfc_tag_uid).publish_state(uid);
+      - homeassistant.tag_scanned: !lambda 'return id(nfc_tag_uid).state;'
+      - script.execute: idle_timer
   # No tag tones on purpose: a tone here fights whatever Home Assistant is
   # about to start playing, and the timing is never right.
   on_tag_removed:

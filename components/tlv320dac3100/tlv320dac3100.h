@@ -20,6 +20,7 @@ class TLV320DAC3100 final : public audio_dac::AudioDac, public Component, public
 
   bool is_muted() override { return this->is_muted_; }
   float volume() override { return this->volume_; }
+  void on_audio_started() override;
 
   void set_clock(uint8_t mux, uint8_t pll_p, uint8_t pll_r, uint8_t pll_j, uint16_t pll_d, uint8_t ndac, uint8_t mdac,
                  uint16_t dosr, uint8_t processing_block) {
@@ -43,6 +44,7 @@ class TLV320DAC3100 final : public audio_dac::AudioDac, public Component, public
   bool write_mute_();
   bool write_volume_();
   void power_up_dac_();
+  bool clocked_from_bclk_() const;
 
   bool has_speaker_() const { return this->output_ != TLV320DAC3100Output::HEADPHONE; }
   bool has_headphone_() const { return this->output_ != TLV320DAC3100Output::SPEAKER; }
@@ -61,6 +63,9 @@ class TLV320DAC3100 final : public audio_dac::AudioDac, public Component, public
   uint8_t word_length_{0};
   uint8_t speaker_gain_{0};
   TLV320DAC3100Output output_{TLV320DAC3100Output::BOTH};
+  bool outputs_ready_{false};
+  bool clock_running_{false};
+  bool dac_powered_{false};
 };
 
 }  // namespace esphome::tlv320dac3100
