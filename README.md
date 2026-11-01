@@ -34,18 +34,22 @@ The [flashing guide](docs/flashing-guide.md) walks through it with photos.
 
 | Component  | Bus | Purpose |
 |------------|-----|---------|
-| `trf7962a` | SPI | TI TRF7962A ISO15693 / SLIX NFC reader — fires `on_tag_present` / `on_tag_removed` and reports the UID |
+| `trf7962a_nfc` | SPI | TI TRF7962A ISO15693 NFC reader on ESPHome's `nfc` framework — `on_tag` / `on_tag_removed` and the `nfc` binary sensor |
 | `tlv320dac3100` | I2C | TI TLV320DAC3100 I2S audio codec — an `audio_dac` platform: clocking, output routing, volume, mute |
 | `dac3100`  | I2C | **Deprecated**, replaced by `tlv320dac3100`. Kept so existing configs still build |
+| `trf7962a` | SPI | **Deprecated**, replaced by `trf7962a_nfc`. Kept so existing configs still build |
 | `lis3dh`   | I2C | ST LIS3DH 3-axis accelerometer — X/Y/Z as sensors, plus optional hardware tap detection via `click:` |
 
-`trf7962a` and `lis3dh` read their configuration back off the chip at the end
-of `setup()` and print it in `dump_config()`, so an init table that failed to
-apply is visible in the boot log rather than presenting as a mystery.
-`tlv320dac3100` logs the clock settings it computed from `sample_rate`.
+`lis3dh` reads its configuration back off the chip at the end of `setup()`
+and prints it in `dump_config()`, so an init table that failed to apply is
+visible in the boot log rather than presenting as a mystery. `trf7962a_nfc`
+reads two registers back live in `dump_config()`, and `tlv320dac3100` logs the
+clock settings it computed from `sample_rate`.
 
-`tlv320dac3100` is the same driver as the one proposed for upstream ESPHome,
-with two small changes so it also builds on releases before 2026.11.
+`tlv320dac3100` and `trf7962a_nfc` are the drivers proposed for upstream
+ESPHome. `tlv320dac3100` has small changes so it also builds on releases
+before 2026.11, and `trf7962a_nfc` is the upstream `trf7962a` renamed so it can
+sit beside the old one here.
 
 To move a config from `dac3100` to `tlv320dac3100`, replace the `dac3100:`
 block with the `audio_dac:` block from [`TonieESP.yaml`](TonieESP.yaml), add
@@ -53,6 +57,15 @@ block with the `audio_dac:` block from [`TonieESP.yaml`](TonieESP.yaml), add
 `external_components` list. The new driver is louder at the same volume
 setting, so recheck your `max_volume` cap. `dac3100` will be removed in a
 later release.
+
+To move a config from `trf7962a` to `trf7962a_nfc`, replace the `trf7962a:`
+block with the one from [`TonieESP.yaml`](TonieESP.yaml) and swap the name in
+the `external_components` list. `irq_pin` is now required. `on_tag_present`
+becomes `on_tag`, and `x` is now a string such as `E0-04-03-50-1E-07-E7-ED`;
+the example strips the dashes so Home Assistant receives the same tag IDs as
+before. A figure counts as removed after three missed scans, and the
+`removal_debounce` option is gone. `trf7962a` will be removed in a later
+release.
 
 ## Requirements
 
@@ -72,7 +85,7 @@ external_components:
       type: git
       url: https://github.com/chunckus-aurelius/TonieBox-ESPhome
       ref: main
-    components: [trf7962a, tlv320dac3100, lis3dh]
+    components: [trf7962a_nfc, tlv320dac3100, lis3dh]
 ```
 
 Then take [`TonieESP.yaml`](TonieESP.yaml) as your starting point. It is a
@@ -305,8 +318,10 @@ sequences were derived from the
 project — chiefly `teddybox` (`board_def.h` and its `trf7962a`, `dac3100` and
 `lis3dh` components), which in turn credits `RvX_TLV320DAC3100` for the
 PLL/NDAC/MDAC clock values and an earlier `electricimp/trf7962a` for the
-TRF7962A register map. The deprecated `dac3100` follows those sources;
-`tlv320dac3100` was written from TI's TLV320DAC3100 datasheet (SLAS671C).
+TRF7962A register map. The deprecated `dac3100` and `trf7962a` follow those
+sources; `tlv320dac3100` was written from TI's TLV320DAC3100 datasheet
+(SLAS671C), and `trf7962a_nfc` from TI's TRF7962A datasheet and application
+note SLOA140B.
 
 TRF7962A quirk handling is cited inline to TI application note `sloa140b.pdf`
 by section. Per-file attribution is in the header comment of each component.
