@@ -243,7 +243,7 @@ same rule: status is what the example config in this repo gives you.
 | Configurable idle timeout | ✅ | `Sleep Timeout` in minutes, 0 to disable. Stock is a fixed 10 minutes with no way to change it |
 | Volume ceiling | ✅ | `Max Volume` clamps every path — ears, Home Assistant, Music Assistant. Stock has no cap |
 | The LED as an HA light | ✅ | An RGB light entity, and a `Status LED` switch that hands it to Home Assistant entirely — with that off, nothing on the device repaints over an automation's colour. That is what makes the sunrise alarm possible without firmware |
-| Test tone | ✅ | A button that proves I2S → DAC → amp → speaker with no network involved — the fastest way to tell a wiring or codec fault from a Music Assistant one. Ships commented out on purpose, since it is bring-up equipment rather than an everyday control: uncomment the `rtttl:` and `button:` blocks in `TonieESP.yaml` for a first flash on new hardware |
+| Test tone | ✅ | A button that proves I2S → DAC → amp → speaker with no network involved — the fastest way to tell a wiring or codec fault from a Music Assistant one. Left out of `TonieESP.yaml` on purpose, since it is bring-up equipment rather than an everyday control: add the blocks under [Test tone](#test-tone) for a first flash on new hardware |
 | Headphone detect | 🟡 | Exposed as a binary sensor on GPIO48. Nothing acts on it and the polarity has not been verified |
 | Timer wake from deep sleep | ✅ | `box_power_down` arms `esp_sleep_enable_timer_wakeup` alongside the `ext1` mask, so a sleeping box can bring itself up. Two ways to set it, both dashboard entities and both off by default: a `Wake Interval` in minutes, and a `Wake Alarm` + `Wake Alarm Time` that wakes two minutes before a wall-clock time. **Confirmed on hardware, both ways:** each armed and self-woke a battery-powered box from deep sleep, with `Last Wake Cause` reading `wake timer` on the way back up. The one open question is drift: the wake timer runs off the internal RC oscillator, so a long alarm may land minutes late — measured only over short hops so far. `Last Wake Cause` against Home Assistant's own timestamp is the diagnostic for it |
 | TTS announcements over music | ⛔ | Unlikely to fit at 44.1 kHz on this hardware — there is no PSRAM, so every buffer is internal SRAM |
@@ -268,9 +268,9 @@ not GPLv3 like the rest of the repository.
 
 ## Things that will bite you
 
-The example config is heavily commented, and most of those comments exist
-because something failed in a way that took a while to explain. The
-load-bearing ones:
+Most of the example config's odd-looking choices exist because something failed
+in a way that took a while to explain. [How the example config
+works](#how-the-example-config-works) covers all of them. The worst ones:
 
 - **There is no PSRAM.** Every audio buffer has to fit in internal SRAM, and
   44.1 kHz playback only just does. Raising any `buffer_duration` or
@@ -301,6 +301,237 @@ load-bearing ones:
   minutes lets the box sleep while someone is listening. Observed on hardware
   2026-08-15. The example config now polls the player state on a 10 s interval
   instead; keep that interval if you cut anything else out of the config.
+- **Quiet the codec before resetting it.** `box_power_down` mutes the DAC and
+  speaker driver and powers down the class-D amp before the software reset. The
+  fix is for a pop heard at shutdown after audio had played. A test build gave
+  no pop in 4 shutdowns, but the pop was heard only once and the unfixed build
+  was never re-run, so treat it as likely fixed rather than proven.
+
+## How the example config works
+
+`TonieESP.yaml` contains no comments, so its reasoning lives here. It is a
+complete config that matches what runs on the author's boxes, apart from the box
+name. Pins come from the toniebox-reverse-engineering project's `teddybox`
+`board_def.h` for rev v1.6.C.
+
+It deliberately does not decide what a tag plays. The box reports the UID and
+Home Assistant decides; see the [automations guide](docs/automations.md). It also
+talks to no cloud: there is no Boxine client and nothing phones home.
+
+### Pin map
+
+| GPIO | Use |
+|---|---|
+| 1 | SPI chip select, TRF7962A |
+| 2 / 3 / 4 | SPI MOSI / MISO / CLK. MISO is fixed by board wiring with no pull resistors |
+| 5 / 6 | I2C SDA / SCL, 400 kHz |
+| 7 | Wake line, an OR of small ear and charger-present |
+| 8 | Charge Sense ADC, ×2.0 (R75/R72, 100k/100k) |
+| 9 | Battery Voltage ADC, ×4.03 (R57/R58, (100k+33k)/33k) |
+| 10 | I2S data |
+| 11 / 12 | I2S BCLK / LRCLK |
+| 13 | TRF7962A IRQ |
+| 17 / 18 / 19 | LED blue / green / red |
+| 20 / 21 | Big ear / small ear, physical push buttons, active low |
+| 26 | DAC3100 hardware reset |
+| 45 | Peripheral rail, high = on |
+| 47 | SD power, active low |
+| 48 | Headphone detect, exposed only |
+
+The divider ratios come from the toniebox-pcb pinout and were not measured on
+every board. The pack is 3-cell NiMH, so about 4.5 V while charging is normal.
+
+### Boot
+
+The first `on_boot` entry runs at priority 1100, ahead of the I2C bus at 1000. In
+one lambda it asserts at compile time that the WiFi buffer overrides still apply,
+releases the deep sleep pin holds on GPIO45, 47, 7, 20 and 21, raises the rails,
+pulses the DAC reset on GPIO26 with blocking delays, and waits 250 ms for the
+rails and codec to settle.
+
+Left latched, the rail holds keep the rails from coming back and the wake pin
+holds make the ears read stuck.
+
+The -100 entry runs `deep_sleep.prevent`, which is **not** the interlock: a manual
+sleep skips that check, so it only blocks the non-manual re-entry from `loop()`.
+It also lights the LED at the earliest point the light exists, so the box shows
+awake during boot, and publishes `Last Wake Cause` once. Only a power-on, OTA or
+restart gesture reads as a cold boot.
+
+### Build, console and logs
+
+- There is no `psram:` block because PSRAM is absent.
+- The S3 console defaults to USB_SERIAL_JTAG, unreachable here because GPIO19 and
+  20 are the red LED and big ear. `hardware_uart: UART0` moves only ESPHome's app
+  logger, so the two `CONFIG_ESP_CONSOLE_*` options move the IDF console too.
+  Without them the serial output stops at `entry 0x...`.
+- `external_components` is cached for a day by default. Add `refresh: 0s` to
+  re-pull on every build.
+- The logger keeps `sensor` at WARN (about 5 states per second otherwise; raise to
+  INFO for live axis values), and `script` and `preferences` at INFO to hide their
+  heartbeat. `trf7962a_nfc` at INFO keeps `Tag detected` and `Tag removed`; DEBUG
+  adds collisions and VERBOSE adds each interrupt and timeout.
+- `ota: encryption:` reuses the `api:` key.
+
+### NFC and audio
+
+`on_tag`'s `x` is `E0-04-...`, most significant byte first. The dashes are stripped
+to keep the IDs the old driver sent. There are no tag tones: a tone fights whatever
+Home Assistant is about to start playing.
+
+The audio path is I2S speaker ← mixer ← one resampler per source ← media player.
+There is no PSRAM, so 44.1 kHz only just fits and 150 ms of I2S buffer does not.
+The MP3 decoder costs about 116 KB on top of the 32768-byte buffer.
+
+`format:` is advertised to Home Assistant, Music Assistant encodes to match, and it
+decides which decoder is compiled in. Music Assistant reads that from stored
+config-entry diagnostics at player setup, not live, so after a format change
+restart it or the device fails with `ESP_ERR_NOT_SUPPORTED`.
+
+The media player's name is just `Speaker` because ESPHome prefixes `friendly_name`.
+
+### Test tone
+
+Proves I2S → DAC → amp → speaker with no network, Home Assistant or decoder
+involved, the fastest way to tell a wiring or codec fault from a Music Assistant
+one. Add this to `TonieESP.yaml` for a first flash on new hardware, then remove it:
+
+```yaml
+rtttl:
+  id: toniebox_rtttl
+  speaker: toniebox_i2s_speaker
+
+button:
+  - platform: template
+    name: "Play Test Tone"
+    id: play_test_tone
+    on_press:
+      - rtttl.play: "two_short:d=4,o=5,b=100:16e6,16e6"
+```
+
+### Accelerometer and gestures
+
+Orientation is measured, not derivable from a datasheet, so confirm it on your own
+board. X is vertical, about -0.97 G at rest and +0.97 G upside down. The part sits
+about 45° rotated around X, so `Y + Z` is the tilt signal: +0.84 leaning left and
+-0.73 leaning right against about 0 upright. Left is `pos`, right is `neg`, for both
+tap and tilt. The guide maps `neg` to forward.
+
+`update_interval: 200ms` is the I2C read cadence, not the ODR. `delta: 0.05` stops
+Z noise publishing nearly every sample, but it also gates `.state`, so each axis
+the gestures read can be up to 0.05 stale.
+
+**Tap.** Timing counts ODR periods, 2.5 ms at 400 Hz. `on_click` refuses with no
+reading yet, when X > -0.80 (tipped or upside down), and when |Y+Z| > 0.25
+(mid-tilt), then debounces for 400 ms.
+
+**Tilt.** The box only reports; Home Assistant seeks. A 200 ms interval needs X ≤
+-0.30, which rejects the flip for the restart gesture (it swings Y+Z past -1.2).
+|Y+Z| under 0.25 re-arms and 0.40 enters, so a box near one threshold cannot
+chatter. A tilt counts only after the box was seen upright, so a box stored tilted
+never seeks. It repeats every 600 ms and disarms after about 30 s.
+
+`homeassistant.event` and light actions cannot run from a lambda, so `tilt_fire` and
+`restart_fire` carry each decision to the action after it.
+
+**Restart.** Upside down plus both ears for about 10 s. The threshold is X ≥ 0.70,
+because a box held inverted in the hand reads 0.79 to 1.26. The blue blink uses
+`transition_length: 0s` to beat the light's 1 s default, and a separate bare `effect:
+"None"` first, because ESPHome rejects both on one action.
+
+**Events** use `data:`, not `variables:`; see the
+[automations guide](docs/automations.md).
+
+### LED
+
+Priority, highest first: Home Assistant (`Status LED` off), Bedtime amber, charging
+(red to green, breathing green when full), low-battery orange under 20%, then green.
+A missing reading never paints as empty or flat. Everything paints at 70% because
+under about 60% the LED is not visible through the shell.
+
+### Entities and restore rules
+
+A wake from deep sleep is a boot, so restore modes matter.
+
+| Entity | Why |
+|---|---|
+| `Power`, `ALWAYS_ON` | A persisted OFF fires `turn_off_action` from `setup()`, before WiFi: the box slept half a second into boot and never got an IP |
+| `Bedtime`, `ALWAYS_OFF` | A persisted ON would start a bedtime on every boot |
+| `Status LED`, `Stay Awake on Charger`, `Wake Alarm` | No restore trap: the first has safe actions, the others have none and are only read |
+| `sleep_armed`, `restore_value: false` | **Must stay false.** A persisted true lets the box sleep before Home Assistant is reachable |
+| Tilt, restart, Bedtime and charge-session globals | Not restored, since they describe a moment that is over |
+| `last_battery_pct`, restored | Without it a box living on its charger reads unknown forever. -1 = never measured |
+
+`Sleep Timeout` steps by 1 so a 1-minute timeout is selectable. `Tap Threshold` and
+`Tap Time Limit` write the chip live; copy the values into `click:` once they feel
+right.
+
+Ear presses of 50 to 800 ms set the volume. A 1 to 12 s hold operates `Power`: the big
+ear turns it on and the small ear turns it off. Both are refused while upside down
+(X < 0.85), so an aborted restart gesture cannot release into a power toggle. A dead
+accelerometer passes that check.
+
+### Bedtime
+
+Bedtime runs alongside whatever is playing. It fades over the last minute only,
+since a linear fade would look switched off at minute four, and waits 65 s before
+powering down. Its switch is turned off after `box_power_down` because two paths
+return instead of sleeping: an ear held and Home Assistant never connected.
+
+### Sleep, wake and power down
+
+**The interlock.** `box_power_down` does nothing until `sleep_armed` is true, and only
+`api: on_client_connected` sets it. Every boot therefore has an OTA window whatever got
+persisted. Do not weaken it.
+
+A 10 s interval re-arms the idle timer while docked with `Stay Awake on Charger` on,
+during Bedtime, and during playback.
+
+`box_power_down`, in order:
+
+1. Refuses if an ear is held, above the teardown so a deferral cannot strand a box
+   with its rails cut.
+2. Stops the player and turns off the LED.
+3. Quiets and resets the codec, before the rail cut because GPIO45 powers it:
+
+   | Step | Page | Register | Value | Purpose |
+   |---|---|---|---|---|
+   | 1 | 0 | `0x40` | `0x0C` | Mute the DAC digitally, then wait 20 ms |
+   | 2 | 1 | `0x2A` | `0x00` | Mute the speaker driver |
+   | 3 | 1 | `0x20` | `0x06` | Power down the class-D amp, then wait 20 ms |
+   | 4 | 0 | `0x01` | `0x01` | Software reset |
+
+   These writes are for `output: SPEAKER`.
+4. Cuts both rails and holds the pads, which are outside the S3 RTC domain.
+5. Builds the ext1 wake mask at runtime. `deep_sleep:` declares no wake source because
+   the mask depends on whether the box is docked: an already-low GPIO7 in an `ANY_LOW`
+   mask is an instant wake. GPIO7 is read directly and configured first, since read
+   cold it returns 0 and looks docked. The wake pads get pullups through sleep using
+   `driver/gpio.h`, because `driver/rtc_io.h` is not in ESPHome's include chain.
+6. Arms the timer wake on top of the ext1 mask.
+7. Enters deep sleep.
+
+**Never add `sleep_duration:` to `deep_sleep:`.** ESPHome only calls
+`esp_sleep_enable_timer_wakeup` when that key exists and never disables a wake source,
+which is why the hand-armed timer survives. The soonest of the two sources wins, and
+both default to off. The alarm is computed from Home Assistant's clock when the box
+sleeps, since there is no RTC, and fires 120 s early with a 60 s minimum. `Sleep Timeout`
+must exceed that lead. With no valid time the box sleeps unarmed rather than staying
+awake on battery.
+
+### Battery and charging
+
+- `samples: 16` because the divider is about 25k Thevenin, above Espressif's 10k ADC
+  guidance. It cuts jitter with no lag.
+- `battery_voltage`'s `on_value` drives `charge_progress` then `battery_level`, so
+  a wake cannot read NaN and show `Unknown`.
+- `charge_progress` maps the 4.35 to 4.65 V constant-current band. Full is detected
+  as a 20 mV drop below the session peak for three reads, above 4.50 V. This is
+  textbook NiMH, and it has not been confirmed through a full charge on this hardware.
+- `battery_level` is a rough estimate, since voltage is a poor NiMH proxy and sags
+  under audio. It was checked at 4.04 V/100% and 3.96 V/93%. On the charger it reports
+  the higher of the last off-charger reading and charge progress, so it never goes
+  backwards.
 
 ## Contributing
 
