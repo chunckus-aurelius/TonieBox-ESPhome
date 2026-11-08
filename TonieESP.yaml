@@ -859,7 +859,7 @@ binary_sensor:
                   return isnan(x) || x < 0.85f;
 
               then:
-                - switch.turn_on: box_power
+                - switch.turn_off: box_power
   - platform: gpio
     id: ear_small_button
     name: "Ear Small Button"

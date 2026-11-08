@@ -117,9 +117,9 @@ one line here, not copying the automation.
 Pair it with a resume automation keyed on the same sensor leaving `none`, and
 you have stock's pause-on-lift behaviour.
 
-Tag removal is debounced in the firmware (1.5 s by default, `removal_debounce`
-on the `trf7962a` component). A figure knocked askew and put straight back does
-not trigger this.
+The firmware counts a figure as removed after three missed scans, about 1 to
+1.5 s at the example's 500 ms `update_interval`. A figure knocked askew and put
+straight back within that time does not trigger this.
 
 ---
 

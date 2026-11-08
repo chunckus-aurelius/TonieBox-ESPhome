@@ -187,7 +187,7 @@ marked working because it ought to be.
 | Stock function | Stock behaviour | Here | Notes |
 |---|---|---|---|
 | Play a Tonie | Place figure on top, audio starts | ✅ | Tag UID goes to Home Assistant as `tag_scanned`; HA/Music Assistant decides what plays |
-| Pause on removal | Lift the figure, playback pauses | 🟡 | The box reports removal; pausing is a Home Assistant automation — see the [automations guide](docs/automations.md). Removal is debounced 1.5 s in `trf7962a`, so a knocked figure does not trigger it |
+| Pause on removal | Lift the figure, playback pauses | 🟡 | The box reports removal; pausing is a Home Assistant automation — see the [automations guide](docs/automations.md). A figure counts as removed after three missed scans, about 1 to 1.5 s at the example's 500 ms `update_interval`, so a figure knocked askew and put straight back does not trigger it |
 | Resume position | Replacing the same figure resumes where it stopped, unless another was played in between | ⬜ | Stock keys this on last-played tag, not a timer |
 | Skip chapter / change track | Tap either side of the box | ✅ | Working end to end against a Music Assistant queue. Taps are debounced 400 ms and gated on the box being upright, so a tap during a tilt does not trip both gestures. Left reports `side: pos`, right `side: neg`; the [automations guide](docs/automations.md) has the automation. `Tap Threshold` is a live number — tune it rather than reflashing. GPIO14/INT1 is not used: CLICK_SRC is polled instead |
 | Fast-forward / rewind | Tilt the box to one side | 🟡 | The box fires `esphome.tonie_tilt` with `side: pos`/`neg` while a tilt is held, repeating every 600 ms so Home Assistant can seek in steps. The device half is verified on hardware; the seek automation in the [automations guide](docs/automations.md) is **written but not yet run**, so this stays partial until it has been. Left is `pos`, right is `neg`, matching tap. The tilt signal is `Y + Z`, not either axis alone: the part sits rotated ~45°, so the two move together. Measured +0.84 leaning left, −0.73 leaning right, against ~0 upright |
@@ -466,8 +466,8 @@ A wake from deep sleep is a boot, so restore modes matter.
 `Tap Time Limit` write the chip live; copy the values into `click:` once they feel
 right.
 
-Ear presses of 50 to 800 ms set the volume. A 1 to 12 s hold operates `Power`: the big
-ear turns it on and the small ear turns it off. Both are refused while upside down
+Ear presses of 50 to 800 ms set the volume. A 1 to 12 s hold on either ear turns `Power`
+off, which runs `box_power_down`. Both are refused while upside down
 (X < 0.85), so an aborted restart gesture cannot release into a power toggle. A dead
 accelerometer passes that check.
 
