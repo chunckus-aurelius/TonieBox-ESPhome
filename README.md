@@ -42,9 +42,8 @@ The [flashing guide](docs/flashing-guide.md) walks through it with photos.
 
 `lis3dh` reads its configuration back off the chip at the end of `setup()`
 and prints it in `dump_config()`, so an init table that failed to apply is
-visible in the boot log rather than presenting as a mystery. `trf7962a_nfc`
-reads two registers back live in `dump_config()`, and `tlv320dac3100` logs the
-clock settings it computed from `sample_rate`.
+visible in the boot log rather than presenting as a mystery. `tlv320dac3100`
+logs the clock settings it computed from `sample_rate`.
 
 `tlv320dac3100` and `trf7962a_nfc` are the drivers proposed for upstream
 ESPHome. `tlv320dac3100` has small changes so it also builds on releases

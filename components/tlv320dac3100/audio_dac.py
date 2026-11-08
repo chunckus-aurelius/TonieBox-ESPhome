@@ -36,9 +36,10 @@ OUTPUTS = {
 SPEAKER_GAINS = {"6dB": 0, "12dB": 1, "18dB": 2, "24dB": 3}
 
 # I2S word length (page 0 / register 27 D5-D4) and BCLK periods per frame
-BITS_PER_SAMPLE = {"16bit": (0, 32), "24bit": (2, 64), "32bit": (3, 64)}
+BITS_PER_SAMPLE = {"16bit": (0, 32), "24bit": (2, 48), "32bit": (3, 64)}
 
 # Clock limits from the datasheet (DVDD >= 1.65 V)
+MCLK_IN_MAX = 50_000_000
 PLL_IN_MIN = 512_000
 PLL_IN_MAX = 20_000_000
 PLL_IN_FRACTIONAL_MIN = 10_000_000
@@ -178,7 +179,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BITS_PER_SAMPLE, default="16bit"): cv.one_of(
                 *BITS_PER_SAMPLE, lower=True
             ),
-            cv.Optional(CONF_MCLK_FREQUENCY): cv.int_range(min=PLL_IN_MIN),
+            cv.Optional(CONF_MCLK_FREQUENCY): cv.int_range(
+                min=PLL_IN_MIN, max=MCLK_IN_MAX
+            ),
             cv.Optional(CONF_OUTPUT, default="BOTH"): cv.enum(OUTPUTS, upper=True),
             cv.Optional(CONF_SPEAKER_GAIN, default="6dB"): cv.enum(SPEAKER_GAINS),
             cv.Optional(CONF_RESET_PIN): pins.gpio_output_pin_schema,

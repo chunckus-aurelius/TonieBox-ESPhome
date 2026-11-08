@@ -41,6 +41,9 @@ static constexpr uint8_t REG_SPK_DRIVER = 0x2A;
 // HP driver power-on 1.22 s, 3.9 ms steps
 static constexpr uint8_t HP_POP_SETTINGS = 0x4E;
 static constexpr uint32_t OUTPUT_POWER_UP_MS = 1300;
+// The DAC's power-on transient pops the speaker if the outputs unmute before it has passed
+static constexpr uint32_t DAC_SETTLE_MS = 120;
+static constexpr uint32_t DAC_SETTLE_TIMEOUT_ID = 0;
 // Output driver bits: 0 dB, D1 reserved as 1; D2 unmutes
 static constexpr uint8_t HP_DRIVER_MUTED = 0x02;
 static constexpr uint8_t HP_DRIVER_UNMUTED = 0x06;
@@ -73,8 +76,8 @@ void TLV320DAC3100::setup() {
     this->mark_failed(LOG_STR("Reset failed"));
     return;
   }
-  // Internal memories initialize within 1 ms of a reset
-  delay(1);
+  // Internal memories initialize within 1 ms of a reset; delay(1) can end sooner
+  delay(2);
 
   const bool uses_pll = (this->clock_mux_ & 0x03) == 0x03;
   // P = 8 is written as 0
@@ -143,19 +146,33 @@ bool TLV320DAC3100::clocked_from_bclk_() const {
 }
 
 void TLV320DAC3100::power_up_dac_() {
-  if (this->dac_powered_ || !this->outputs_ready_ || !this->clock_running_ || this->is_failed())
+  if (this->dac_state_ != DacState::DAC_STATE_OFF || !this->outputs_ready_ || !this->clock_running_ ||
+      this->is_failed())
     return;
   // Both channels on, soft-stepped volume; the mono speaker gets (L + R) / 2
   const uint8_t data_path = this->has_headphone_() ? 0xD4 : 0xF4;
-  const uint8_t hp_driver = this->has_headphone_() ? HP_DRIVER_UNMUTED : HP_DRIVER_MUTED;
-  const uint8_t spk_driver = (this->speaker_gain_ << 3) | (this->has_speaker_() ? SPK_DRIVER_UNMUTED : 0x00);
-  if (!this->write_page_(0, REG_DAC_DATA_PATH, data_path) || !this->write_volume_() || !this->write_mute_() ||
-      !this->write_page_(1, REG_HPL_DRIVER, hp_driver) || !this->write_byte(REG_HPR_DRIVER, hp_driver) ||
-      !this->write_byte(REG_SPK_DRIVER, spk_driver) || !this->write_byte(REG_PAGE, 0x00)) {
-    this->mark_failed(LOG_STR("DAC power-up failed"));
+  // The DAC comes up digitally muted; unmute_outputs_() applies the levels once it has settled
+  if (!this->write_page_(0, REG_DAC_MUTE, 0x0C) || !this->write_byte(REG_DAC_DATA_PATH, data_path)) {
+    this->status_set_warning(LOG_STR("DAC power-up failed"));
     return;
   }
-  this->dac_powered_ = true;
+  this->dac_state_ = DacState::DAC_STATE_SETTLING;
+  this->set_timeout(DAC_SETTLE_TIMEOUT_ID, DAC_SETTLE_MS, [this]() { this->unmute_outputs_(); });
+}
+
+void TLV320DAC3100::unmute_outputs_() {
+  const uint8_t hp_driver = this->has_headphone_() ? HP_DRIVER_UNMUTED : HP_DRIVER_MUTED;
+  const uint8_t spk_driver = (this->speaker_gain_ << 3) | (this->has_speaker_() ? SPK_DRIVER_UNMUTED : 0x00);
+  // Levels last; on failure the state returns to off, so the next audio start retries
+  if (!this->write_page_(1, REG_HPL_DRIVER, hp_driver) || !this->write_byte(REG_HPR_DRIVER, hp_driver) ||
+      !this->write_byte(REG_SPK_DRIVER, spk_driver) || !this->write_byte(REG_PAGE, 0x00) || !this->write_volume_() ||
+      !this->write_mute_()) {
+    this->status_set_warning(LOG_STR("DAC power-up failed"));
+    this->dac_state_ = DacState::DAC_STATE_OFF;
+    return;
+  }
+  this->status_clear_warning();
+  this->dac_state_ = DacState::DAC_STATE_ON;
 }
 
 void TLV320DAC3100::dump_config() {
